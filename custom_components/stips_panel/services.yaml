@@ -1,0 +1,105 @@
+register_screen:
+  name: Register/update STIPS screen
+  description: Internal screen heartbeat and telemetry endpoint used by STIPS.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    screen_name: { selector: { text: {} } }
+    installed_revision: { selector: { number: { min: 0, mode: box } } }
+
+report_status:
+  name: Report dashboard deployment status
+  description: Internal status callback from a STIPS screen.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    state: { required: true, selector: { text: {} } }
+
+report_command:
+  name: Report remote command status
+  description: Internal acknowledgement of a targeted management command.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    command: { required: true, selector: { text: {} } }
+    state: { required: true, selector: { text: {} } }
+    message: { selector: { text: {} } }
+
+report_update:
+  name: Report OTA update status
+  description: Internal progress/status callback for STIPS APK installation.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    phase: { required: true, selector: { text: {} } }
+    progress: { selector: { number: { min: 0, max: 100, mode: slider } } }
+    installed_version: { selector: { text: {} } }
+    available_version: { selector: { text: {} } }
+    message: { selector: { text: {} } }
+
+report_diagnostics:
+  name: Upload STIPS diagnostic package
+  description: Internal base64 ZIP upload from a managed panel. Packages are capped at 3 MB.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    filename: { selector: { text: {} } }
+    content_base64: { required: true, selector: { text: { multiline: true } } }
+
+sync_current:
+  name: Sync current dashboard
+  description: Store the screen's current dashboard snapshot without creating a deployment.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    project: { required: true, selector: { object: {} } }
+    installed_revision: { selector: { number: { min: 0, mode: box } } }
+
+push_dashboard:
+  name: Push dashboard
+  description: Admin-only atomic dashboard deployment to one STIPS screen.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    project: { required: true, selector: { object: {} } }
+    note: { selector: { text: {} } }
+
+rollback:
+  name: Roll back dashboard
+  description: Deploy a previously stored STIPS dashboard revision.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    revision: { required: true, selector: { number: { min: 1, mode: box } } }
+
+screen_command:
+  name: Send STIPS management command
+  description: Send a targeted dashboard, kiosk, Device Owner, watchdog, diagnostic, maintenance or OTA command.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }
+    command:
+      required: true
+      selector:
+        select:
+          options:
+            - reload_dashboard
+            - refresh_entities
+            - reload_configuration
+            - restart_dashboard_ui
+            - reload_metadata
+            - clear_stale_caches
+            - restart_stips
+            - reboot_device
+            - enable_kiosk
+            - disable_kiosk
+            - apply_device_owner_policies
+            - set_device_owner_policies
+            - maintenance_unlock
+            - maintenance_relock
+            - configure_watchdog
+            - set_system_update_policy
+            - request_bug_report
+            - restore_device_config
+            - upload_diagnostics
+            - install_update
+    data:
+      description: Optional command-specific payload.
+      selector: { object: {} }
+
+request_recovery:
+  name: Request panel recovery
+  description: Re-send the newest stored project to an already-installed STIPS panel that lost its local project copies.
+  fields:
+    screen_id: { required: true, selector: { text: {} } }

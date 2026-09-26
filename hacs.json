@@ -1,0 +1,7 @@
+{
+  "name": "STIPS Panel Remote Manager",
+  "zip_release": true,
+  "filename": "stips-panel-remote-manager.zip",
+  "hide_default_branch": true,
+  "homeassistant": "2024.7.0"
+}

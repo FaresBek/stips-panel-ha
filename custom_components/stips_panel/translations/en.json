@@ -1,0 +1,26 @@
+{
+  "title": "STIPS Panel Remote Manager",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up STIPS Panel Remote Manager",
+        "description": "Create the local manager and add the STIPS Panels editor to the sidebar. No STIPS cloud account is required."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "STIPS Panel Remote Manager is already configured."
+    }
+  },
+  "services": {
+    "register_screen": {"name": "Register/update STIPS screen", "description": "Internal STIPS heartbeat and telemetry update."},
+    "report_status": {"name": "Report deployment status", "description": "Internal dashboard deployment callback from STIPS."},
+    "report_command": {"name": "Report management command", "description": "Internal acknowledgement of a STIPS management command."},
+    "report_update": {"name": "Report OTA update", "description": "Internal APK update progress callback from STIPS."},
+    "report_diagnostics": {"name": "Upload diagnostics", "description": "Internal STIPS diagnostic ZIP upload."},
+    "sync_current": {"name": "Sync current dashboard", "description": "Store the current screen snapshot without creating a deployment."},
+    "push_dashboard": {"name": "Push dashboard", "description": "Admin-only atomic dashboard deployment to one STIPS screen."},
+    "rollback": {"name": "Rollback dashboard", "description": "Admin-only deployment of a previous STIPS revision."},
+    "screen_command": {"name": "Send STIPS management command", "description": "Admin-only dashboard, kiosk, Device Owner, watchdog, diagnostic, maintenance or OTA command."},
+    "request_recovery": {"name": "Request panel recovery", "description": "Re-send the newest stored project to an installed STIPS panel."}
+  }
+}
