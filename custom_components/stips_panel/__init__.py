@@ -1,6 +1,6 @@
 """STIPS Panel fleet, dashboard and managed-device remote manager.
 
-V1.5.3 adds self-contained HACS installation and UI setup while retaining the local-first
+V1.5.6 adds production-only Room Card configuration while retaining the local-first
 dashboard deployment protocol for dedicated STIPS Android wall panels.
 """
 from __future__ import annotations
@@ -942,7 +942,7 @@ async def _async_setup_manager(hass: HomeAssistant) -> bool:
                     "name": "stips-panel-editor",
                     "embed_iframe": False,
                     "trust_external": False,
-                    "js_url": "/stips-panel/static/stips-panel-editor.js?v=1.5.3",
+                    "js_url": "/stips-panel/static/stips-panel-editor.js?v=1.5.6",
                 }
             },
             require_admin=True,
