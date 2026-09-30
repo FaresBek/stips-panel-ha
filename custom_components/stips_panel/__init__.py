@@ -1,6 +1,6 @@
 """STIPS Panel fleet, dashboard and managed-device remote manager.
 
-V1.5.8 adds alert activation sources and alert delays while retaining the local-first
+V1.5.9 adds a live card preview, gap packing and card duplication while retaining the local-first
 dashboard deployment protocol for dedicated STIPS Android wall panels.
 """
 from __future__ import annotations
@@ -942,7 +942,7 @@ async def _async_setup_manager(hass: HomeAssistant) -> bool:
                     "name": "stips-panel-editor",
                     "embed_iframe": False,
                     "trust_external": False,
-                    "js_url": "/stips-panel/static/stips-panel-editor.js?v=1.5.8",
+                    "js_url": "/stips-panel/static/stips-panel-editor.js?v=1.5.9",
                 }
             },
             require_admin=True,
