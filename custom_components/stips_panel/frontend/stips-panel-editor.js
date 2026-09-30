@@ -485,11 +485,20 @@ class StipsPanelEditor extends HTMLElement {
     card.entityIds = [...entityIds];
     if (title) card.title = title;
     if (type === 'Text') card.customText = '';
-    if (type === 'Room') {
-      card.layout={width:2,height:2};
-      card.tapAction={kind:'tech.stips.home.core.model.CardAction.Nothing'};
+    if (type === 'Room' || type === 'RoomPopup') {
+      card.layout=type==='RoomPopup'?{width:1.25,height:.75}:{width:2,height:2};
+      card.tapAction=type==='RoomPopup'
+        ? {kind:'tech.stips.home.core.model.CardAction.Navigate',target:''}
+        : {kind:'tech.stips.home.core.model.CardAction.Toggle'};
+      card.doubleTapAction={kind:'tech.stips.home.core.model.CardAction.Nothing'};
       card.longPressAction={kind:'tech.stips.home.core.model.CardAction.Nothing'};
       this.ensureCardSettings(card);
+    }
+    if (type === 'PagePopup') {
+      card.layout={width:1,height:.75};
+      const targetPageId=this.dashboard?.pages?.[0]?.id||'';
+      card.tapAction={kind:'tech.stips.home.core.model.CardAction.Navigate',target:targetPageId};
+      this.ensureCardSettings(card).targetPageId=targetPageId;
     }
     page.sections[0].cards.push(card);
     this.selectedCardId = id;
@@ -564,7 +573,9 @@ class StipsPanelEditor extends HTMLElement {
       Date:['Clock',{use24Hour:true,showSeconds:false,showDate:true,dateFormat:'medium',showDayOfWeek:true,timeZoneId:'system',fontScale:1,alignment:'start'}],
       RgbLight:['RgbLight',{showColorWheel:true,showBrightness:true,showPresetColors:true,showRecentColors:true,favoriteColors:[],showColorTemperature:true}],
       Cover:['Cover',{controlStyle:'Slider',orientation:'Horizontal',reverseDirection:false,shortPressToggleOpenClose:false,showOpen:true,showStop:true,showClose:true,showCurrentPosition:true,showPositionSlider:true,showTilt:true,presetPositions:[0,25,50,75,100]}],
-      Room:['Room',{areaId:'',visibleDomains:['light','switch','cover','climate'],entityLayout:'compact',entityOverrides:{},roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false}}],
+      Room:['Room',{areaId:'',visibleDomains:['light','switch','cover','climate'],entityLayout:'compact',entityOverrides:{},roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
+      RoomPopup:['Room',{areaId:'',visibleDomains:['light','switch','cover','climate'],entityLayout:'compact',entityOverrides:{},roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
+      PagePopup:['PagePopup',{targetPageId:'',showTitle:true,showSummary:true,roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
       Page:['Page',{targetPageId:'',showTitle:true,showSummary:true}],
       Navigation:['Page',{targetPageId:'',showTitle:true,showSummary:true}],
       NavigationButton:['Page',{targetPageId:'',showTitle:true,showSummary:true}],
@@ -587,6 +598,12 @@ class StipsPanelEditor extends HTMLElement {
   updateCardGraph(field,value) { const c=this.selectedCard;if(!c)return;(c.graph||={hours:24,style:'line',showLegend:true})[field]=value;this.draftSource='draft';this.render(); }
   updateCardRoom(field,value) { const c=this.selectedCard;if(!c)return;(c.room||={})[field]=value;this.draftSource='draft';this.render(); }
   updateRoomCardField(field,value) { const s=this.ensureCardSettings();if(!s)return;s[field]=value;this.draftSource='draft';this.render(); }
+  updatePagePopupTarget(value) {
+    const c=this.selectedCard,s=this.ensureCardSettings();if(!c||!s)return;
+    s.targetPageId=value;
+    if(String(c.tapAction?.kind||'').endsWith('.Navigate')) c.tapAction.target=value;
+    this.draftSource='draft';this.render();
+  }
   updateRoomToggle(field,value) { const s=this.ensureCardSettings();if(!s)return;(s.roomToggle||={})[field]=value;this.draftSource='draft';this.render(); }
   updateRoomOverride(entityId,field,value) { const s=this.ensureCardSettings();if(!s)return;const o=(s.entityOverrides||={})[entityId]||={};o[field]=value;this.draftSource='draft';this.render(); }
   moveRoomEntity(entityId,delta) {
@@ -625,6 +642,12 @@ class StipsPanelEditor extends HTMLElement {
     p.pinProtection ||= {settings:false,dashboardEdit:true,cardEdit:true,navigationEdit:true,exitKiosk:true,showInterfaceBars:false,floatingProtectedActions:false,installerAdvanced:true};
     p.showroom ||= {dashboardCount:2,presetProfile:'Auto',appliedPresetProfile:'',showHeader:true,headerTitle:'STIPS Smart Home',headerSubtitle:'Interactive Showroom',showHeaderTitle:true,showHeaderSubtitle:true,showPageTitle:true,showClock:true,showDate:false,showDemoBadge:true,showSettingsShortcut:false,showPageIndicator:true,hideAppNavigation:true,floatingAction:'admin',floatingLongPressOnly:true,protectAdminWithInstallerPin:true,autoResetEnabled:true,autoResetMinutes:3,attractModeEnabled:true,attractAfterSeconds:45,keepScreenAwake:true};
     p.alerts ||= {enabled:false,wakeScreen:true,showPopup:true,soundEnabled:true,selectedTone:'Siren',volume:80,rules:[]};
+    // Panels older than Android 1.7.0 have no activation fields; they are Local panel with no delays.
+    p.alerts.activationSource ??= 'LocalPanel';
+    if (p.alerts.activationEntityId === undefined) p.alerts.activationEntityId=null;
+    p.alerts.activationControlMode ??= 'FollowHomeAssistant';
+    p.alerts.armingDelaySeconds ??= 0;
+    p.alerts.triggerDelaySeconds ??= 0;
     if (p.floatingButton.shortClickAction == null) p.floatingButton.shortClickAction='OpenMenu';
     if (!Number.isFinite(Number(p.floatingButton.sizeDp))) p.floatingButton.sizeDp=48;
     if (!Number.isFinite(Number(p.floatingButton.positionX))) p.floatingButton.positionX=0;
@@ -638,11 +661,20 @@ class StipsPanelEditor extends HTMLElement {
   updateAlertField(field,value) { const p=this.ensurePanelConfig();if(!p)return;p.alerts[field]=value;this.draftSource='draft';this.render(); }
   updateAlertRules(text) {
     const p=this.ensurePanelConfig();if(!p)return;
+    // Keep ids, enabled flags and unknown fields of rules whose entity is unchanged.
+    const existing=new Map((p.alerts.rules||[]).map(rule=>[rule.entityId,rule]));
+    const delay=(value)=>{ if(value==null||String(value).trim()==='')return null; const n=Math.round(Number(value)); return Number.isFinite(n)?Math.max(0,Math.min(600,n)):null; };
     p.alerts.rules=String(text).split(/\r?\n/).map((line,index)=>{
-      const [entityId,triggerState,customLabel]=line.split('|').map(x=>x.trim());
-      return entityId ? {id:`ha-alert-${index+1}-${entityId.replace(/[^a-z0-9]+/gi,'-')}`,entityId,enabled:true,triggerState:triggerState||null,customLabel:customLabel||null} : null;
+      const [entityId,triggerState,customLabel,delaySeconds]=line.split('|').map(x=>x.trim());
+      if(!entityId)return null;
+      const base=existing.get(entityId)||{id:`ha-alert-${index+1}-${entityId.replace(/[^a-z0-9]+/gi,'-')}`,entityId,enabled:true};
+      return {...base,entityId,triggerState:triggerState||null,customLabel:customLabel||null,delaySeconds:delay(delaySeconds)};
     }).filter(Boolean);
     this.draftSource='draft';this.render();
+  }
+  alertActivationEntities() {
+    return this.entityCatalog().filter(e=>['input_boolean','switch','binary_sensor'].includes(e.domain))
+      .sort((a,b)=>(a.domain==='binary_sensor')-(b.domain==='binary_sensor')||a.name.localeCompare(b.name));
   }
   updateScreenScale(field, value) { const p=this.ensurePanelConfig(); if(!p)return; let v=value; if(['cardScale','textScale','iconScale'].includes(field)) v=Math.max(.7,Math.min(1.8,Math.round(Number(value)*20)/20)); if(field==='columnsOverride') v=Math.max(0,Math.min(8,Math.round(Number(value)))); p.screenScale[field]=v; this.draftSource='draft'; this.render(); }
   applyScalePreset(kind) { const p=this.ensurePanelConfig(); if(!p)return; p.screenScale = kind==='q7' ? {cardScale:1.25,textScale:1.20,iconScale:1.15,spacing:'Comfortable',columnsOverride:0} : {cardScale:1.00,textScale:.95,iconScale:1.00,spacing:'Compact',columnsOverride:0}; this.draftSource='draft'; this.render(); }
@@ -833,7 +865,7 @@ class StipsPanelEditor extends HTMLElement {
   }
 
   builtinCardTypes() {
-    return ['Clock','Date','Text','PanelBrightness','PanelVolume','Connectivity','QuickActions','AlertControl','Page','NavigationButton','Header','Spacer','Divider','Image','SecuritySummary'];
+    return ['Room','RoomPopup','PagePopup','Clock','Date','Text','PanelBrightness','PanelVolume','Connectivity','QuickActions','AlertControl','Page','NavigationButton','Header','Spacer','Divider','Image','SecuritySummary'];
   }
 
   pickerHtml() {
@@ -1014,11 +1046,17 @@ class StipsPanelEditor extends HTMLElement {
     const profileOptions=this.profiles.map(x=>`<option value="${this.attr(x.profile_id)}">${this.esc(x.name)}</option>`).join('');
     const groupsHtml=this.groups.map(g=>`<button class="group-chip" data-group="${this.attr(g.group_id||g.id||'')}">${this.esc(g.name)} · ${(g.screen_ids||[]).length}</button>`).join('')||'<span class="hint">No fleet groups yet.</span>';
     const cardSettings=c?this.ensureCardSettings(c):{};
-    const roomEntities=c?.type==='Room' ? this.entityCatalog().filter(e=>['light','switch','cover','climate'].includes(e.domain)&&e.areaId===cardSettings.areaId).sort((a,b)=>((cardSettings.entityOverrides?.[a.id]?.order??999999)-(cardSettings.entityOverrides?.[b.id]?.order??999999))||a.name.localeCompare(b.name)||a.id.localeCompare(b.id)) : [];
+    const roomEntities=['Room','RoomPopup'].includes(c?.type) ? this.entityCatalog().filter(e=>['light','switch','cover','climate'].includes(e.domain)&&e.areaId===cardSettings.areaId).sort((a,b)=>((cardSettings.entityOverrides?.[a.id]?.order??999999)-(cardSettings.entityOverrides?.[b.id]?.order??999999))||a.name.localeCompare(b.name)||a.id.localeCompare(b.id)) : [];
     const cardActionName=(action)=>String(action?.kind||'').split('.').pop()||'Nothing';
-    const actionOptions=(action)=>['MoreInfo','Toggle','Navigate','Execute','OpenUrl','Nothing'].map(x=>`<option value="${x}" ${cardActionName(action)===x?'selected':''}>${x.replace('MoreInfo','More info').replace('OpenUrl','Open URL')}</option>`).join('');
-    const actionFields=(slot,action)=>cardActionName(action)==='Navigate'?`<label>Navigation target<input data-card-action-field="${slot}:target" value="${this.attr(action?.target||'')}"></label>`:cardActionName(action)==='Execute'?`<div class="two"><label>Service domain<input data-card-action-field="${slot}:domain" value="${this.attr(action?.domain||'')}"></label><label>Service<input data-card-action-field="${slot}:service" value="${this.attr(action?.service||'')}"></label></div>`:cardActionName(action)==='OpenUrl'?`<label>URL<input data-card-action-field="${slot}:url" value="${this.attr(action?.url||'')}"></label>`:'';
-    const alertRules=(alerts.rules||[]).map(rule=>[rule.entityId,rule.triggerState||'',rule.customLabel||''].join('|')).join('\n');
+    const popupCard=['RoomPopup','PagePopup'].includes(c?.type);
+    const actionOptions=(action)=>['MoreInfo','Toggle','Navigate','Execute','OpenUrl','Nothing'].map(x=>`<option value="${x}" ${cardActionName(action)===x?'selected':''}>${popupCard&&x==='Navigate'?'Open popup':x.replace('MoreInfo','More info').replace('OpenUrl','Open URL')}</option>`).join('');
+    const actionFields=(slot,action)=>cardActionName(action)==='Navigate'&&popupCard?`<p class="hint">${c.type==='RoomPopup'?'Opens this room’s live controls.':'Opens the page selected under Page popup.'}</p>`:cardActionName(action)==='Navigate'?`<label>Navigation target<select data-card-action-field="${slot}:target"><option value="">Choose page</option>${(this.dashboard?.pages||[]).map(page=>`<option value="${this.attr(page.id)}" ${page.id===action?.target?'selected':''}>${this.esc(page.title||page.id)}</option>`).join('')}</select></label>`:cardActionName(action)==='Execute'?`<div class="two"><label>Service domain<input data-card-action-field="${slot}:domain" value="${this.attr(action?.domain||'')}"></label><label>Service<input data-card-action-field="${slot}:service" value="${this.attr(action?.service||'')}"></label></div>`:cardActionName(action)==='OpenUrl'?`<label>URL<input data-card-action-field="${slot}:url" value="${this.attr(action?.url||'')}"></label>`:'';
+    const alertRules=(alerts.rules||[]).map(rule=>[rule.entityId,rule.triggerState||'',rule.customLabel||'',rule.delaySeconds??''].join('|').replace(/\|+$/,'')).join('\n');
+    const alertHa=alerts.activationSource==='HomeAssistantEntity';
+    const alertEntities=this.draft?this.alertActivationEntities():[];
+    const alertEntityOptions=alertEntities.map(e=>`<option value="${this.attr(e.id)}">${this.esc(e.name)}${e.domain==='binary_sensor'?' (read-only)':''}</option>`).join('');
+    const alertReadOnly=String(alerts.activationEntityId||'').startsWith('binary_sensor.');
+    const delayOptions=(value)=>[0,5,10,15,20,30,45,60,90,120,180,300,Number(value||0)].filter((x,i,a)=>a.indexOf(x)===i).sort((a,b)=>a-b).map(x=>`<option value="${x}" ${x===Number(value||0)?'selected':''}>${x===0?'Off':x%60===0?`${x/60} min`:`${x} s`}</option>`).join('');
 
     this.shadowRoot.innerHTML=`
       <style>${this.css()}</style>
@@ -1139,17 +1177,26 @@ class StipsPanelEditor extends HTMLElement {
                  <details><summary>Entity controls</summary><div class="panel-settings"><div class="subgrid">${[['showPower','Power'],['showBrightness','Brightness'],['showColor','Color'],['showColorTemperature','Color temperature'],['showCoverButtons','Cover buttons'],['showCoverPosition','Cover position'],['showCoverCurrentPosition','Current cover position'],['showCoverTilt','Cover tilt'],['showClimateMode','HVAC mode'],['showClimateTemperatureControls','Target temperature'],['showClimateCurrentTemperature','Current temperature'],['showClimateFanMode','Fan mode'],['showClimateSwing','Swing'],['showClimatePresetMode','Preset'],['showClimateHumidity','Humidity'],['showClockSeconds','Clock seconds']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-feature-bool="${f}" ${checked(c.features?.[f] ?? !['showClimateHumidity','showClockSeconds'].includes(f))}> ${l}</label>`).join('')}</div></div></details>
                  ${['Graph','History'].includes(c.type)?`<details open><summary>Graph / history</summary><div class="panel-settings"><label>Period<select data-graph-number="hours">${[1,6,12,24,168,720].map(x=>`<option value="${x}" ${Number(c.graph?.hours||24)===x?'selected':''}>${x<24?`${x} hours`:x===24?'1 day':x===168?'7 days':'30 days'}</option>`).join('')}</select></label><label>Style<select data-graph-select="style">${['line','area','bar'].map(x=>`<option value="${x}" ${x===(c.graph?.style||'line')?'selected':''}>${x}</option>`).join('')}</select></label><label class="toggleline"><input type="checkbox" data-graph-bool="showLegend" ${checked(c.graph?.showLegend!==false)}> Legend</label></div></details>`:''}
                  ${c.type==='Area'?`<details open><summary>Room summary</summary><div class="panel-settings"><label>Area ID<input data-room-text="areaId" value="${this.attr(c.room?.areaId||'')}"></label><div class="subgrid">${[['lights','Lights'],['active','Active devices'],['temperature','Temperature'],['humidity','Humidity'],['occupancy','Occupancy'],['media','Media'],['quickActions','Quick actions']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-bool="${f}" ${checked(c.room?.[f] ?? f!=='quickActions')}> ${l}</label>`).join('')}</div></div></details>`:''}
-                 ${c.type==='Room'?`<details open><summary>Room Card</summary><div class="panel-settings">
+                  ${['Room','RoomPopup'].includes(c.type)?`<details open><summary>${c.type==='RoomPopup'?'Room Popup Card':'Room Card'}</summary><div class="panel-settings">
+                    ${c.type==='RoomPopup'?'<p class="hint">Open popup displays this Home Assistant room’s live controls in a larger modal. It does not open a dashboard page.</p>':''}
                    <label>Home Assistant area<select data-room-card-area><option value="">Choose area</option>${this.areas.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(a=>{const id=a.area_id||a.id;return `<option value="${this.attr(id)}" ${id===cardSettings.areaId?'selected':''}>${this.esc(a.name||id)}</option>`}).join('')}</select></label>
                    <label>Show entities<select data-room-domains>${[['light,switch,cover,climate','All'],['light','Lights'],['switch','Switches'],['light,switch','Lights & Switches'],['cover','Shutters'],['climate','AC / Climate']].map(([v,l])=>`<option value="${v}" ${v.split(',').every(x=>(cardSettings.visibleDomains||[]).includes(x))&&(cardSettings.visibleDomains||[]).length===v.split(',').length?'selected':''}>${l}</option>`).join('')}</select></label>
                    <label>Light & switch layout<select data-room-layout><option value="compact" ${cardSettings.entityLayout!=='full'?'selected':''}>Compact · 2 per row</option><option value="full" ${cardSettings.entityLayout==='full'?'selected':''}>Full row · power button</option></select></label>
-                   <b>Room OFF behavior</b><div class="subgrid">${[['lights','Turn off lights'],['switches','Turn off switches'],['closeCovers','Close shutters'],['turnOffClimate','Turn off AC']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-toggle="${f}" ${checked(cardSettings.roomToggle?.[f] ?? ['lights','switches'].includes(f))}> ${l}</label>`).join('')}</div>
+                    <b>Room OFF behavior</b><div class="subgrid">${[['lights','Turn off lights'],['switches','Turn off switches'],['closeCovers','Close shutters'],['turnOffClimate','Turn off AC']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-toggle="${f}" ${checked(cardSettings.roomToggle?.[f] ?? ['lights','switches'].includes(f))}> ${l}</label>`).join('')}</div>
+                    <b>Room ON behavior</b><div class="subgrid">${[['turnOnLights','Turn on lights'],['turnOnSwitches','Turn on switches'],['openCovers','Open shutters'],['turnOnClimate','Turn on AC']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-toggle="${f}" ${checked(cardSettings.roomToggle?.[f] ?? ['turnOnLights','turnOnSwitches'].includes(f))}> ${l}</label>`).join('')}</div>
                    <b>Detected entities</b>${roomEntities.length?roomEntities.map((e,i)=>{const o=cardSettings.entityOverrides?.[e.id]||{};return `<div class="room-entity"><label class="toggleline"><input type="checkbox" data-room-visible="${this.attr(e.id)}" ${checked(!o.hidden)}> <span><b>${this.esc(o.customName||e.name)}</b><small>${this.esc(e.id)} · ${this.esc(e.state)}</small></span></label><input data-room-name="${this.attr(e.id)}" value="${this.attr(o.customName||'')}" placeholder="Custom display name"><div><button data-room-up="${this.attr(e.id)}" ${i===0?'disabled':''}>↑</button><button data-room-down="${this.attr(e.id)}" ${i===roomEntities.length-1?'disabled':''}>↓</button></div></div>`}).join(''):'<p class="hint">No supported entities are assigned to this area. Hidden and unavailable entities remain listed when registry metadata is available.</p>'}
                  </div></details>`:''}
                  ${c.type==='Weather'?`<details open><summary>Weather</summary><div class="panel-settings"><div class="subgrid">${[['showTemperature','Temperature'],['showCondition','Condition'],['showWeatherIcon','Icon'],['showFeelsLike','Feels like'],['showTodayHighLow','High / low'],['showHumidity','Humidity'],['showWind','Wind'],['showPrecipitation','Precipitation'],['showDailyForecast','Daily forecast'],['showWeeklyForecast','Weekly forecast']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-card-setting-bool="${f}" ${checked(cardSettings[f])}> ${l}</label>`).join('')}</div><label>Forecast days<input type="number" min="1" max="10" data-card-setting-number="forecastDays" value="${cardSettings.forecastDays||5}"></label><div class="two"><label>Temperature unit<select data-card-setting-select="temperatureUnit">${['auto','celsius','fahrenheit'].map(x=>`<option ${x===(cardSettings.temperatureUnit||'auto')?'selected':''}>${x}</option>`).join('')}</select></label><label>Layout<select data-card-setting-select="layout">${['auto','compact','detailed'].map(x=>`<option ${x===(cardSettings.layout||'auto')?'selected':''}>${x}</option>`).join('')}</select></label></div><div class="two"><label>Icon size<select data-card-setting-select="iconSize">${['small','medium','large'].map(x=>`<option ${x===(cardSettings.iconSize||'medium')?'selected':''}>${x}</option>`).join('')}</select></label><label>Temperature size<select data-card-setting-select="mainTemperatureSize">${['small','medium','large'].map(x=>`<option ${x===(cardSettings.mainTemperatureSize||'medium')?'selected':''}>${x}</option>`).join('')}</select></label></div><label>Condition text size<select data-card-setting-select="conditionTextSize">${['small','medium','large'].map(x=>`<option ${x===(cardSettings.conditionTextSize||'medium')?'selected':''}>${x}</option>`).join('')}</select></label></div></details>`:''}
                  ${['Clock','Date'].includes(c.type)?`<details open><summary>Clock / date</summary><div class="panel-settings"><div class="subgrid">${[['use24Hour','24-hour'],['showSeconds','Seconds'],['showDate','Date'],['showDayOfWeek','Day of week']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-card-setting-bool="${f}" ${checked(cardSettings[f])}> ${l}</label>`).join('')}</div><label>Time zone<input data-card-setting-text="timeZoneId" value="${this.attr(cardSettings.timeZoneId||'system')}"></label><div class="two"><label>Date format<select data-card-setting-select="dateFormat">${['short','medium','long'].map(x=>`<option ${x===(cardSettings.dateFormat||'medium')?'selected':''}>${x}</option>`).join('')}</select></label><label>Alignment<select data-card-setting-select="alignment">${['start','center','end'].map(x=>`<option ${x===(cardSettings.alignment||'start')?'selected':''}>${x}</option>`).join('')}</select></label></div><label>Font scale<input type="number" min=".5" max="2" step=".05" data-card-setting-number="fontScale" value="${cardSettings.fontScale||1}"></label></div></details>`:''}
                  ${c.type==='RgbLight'?`<details open><summary>RGB light</summary><div class="panel-settings"><div class="subgrid">${[['showColorWheel','Color wheel'],['showBrightness','Brightness'],['showPresetColors','Preset colors'],['showRecentColors','Recent colors'],['showColorTemperature','Color temperature']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-card-setting-bool="${f}" ${checked(cardSettings[f])}> ${l}</label>`).join('')}</div><label>Favorite colors <small>comma-separated hex colors</small><input data-card-setting-list="favoriteColors" value="${this.attr((cardSettings.favoriteColors||[]).join(', '))}"></label></div></details>`:''}
                  ${c.type==='Cover'?`<details open><summary>Cover</summary><div class="panel-settings"><label>Control style<select data-card-setting-select="controlStyle">${['Slider','Shutter'].map(x=>`<option value="${x}" ${x===(cardSettings.controlStyle||'Slider')?'selected':''}>${x}</option>`).join('')}</select></label><label>Orientation<select data-card-setting-select="orientation">${['Horizontal','Vertical'].map(x=>`<option value="${x}" ${x===(cardSettings.orientation||'Horizontal')?'selected':''}>${x}</option>`).join('')}</select></label><div class="subgrid">${[['reverseDirection','Reverse'],['shortPressToggleOpenClose','Tap toggles'],['showOpen','Open'],['showStop','Stop'],['showClose','Close'],['showCurrentPosition','Current position'],['showPositionSlider','Position slider'],['showTilt','Tilt']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-card-setting-bool="${f}" ${checked(cardSettings[f])}> ${l}</label>`).join('')}</div><label>Preset positions <small>comma-separated percentages</small><input data-card-setting-number-list="presetPositions" value="${this.attr((cardSettings.presetPositions||[]).join(', '))}"></label></div></details>`:''}
+                 ${c.type==='PagePopup'?`<details open><summary>Page popup</summary><div class="panel-settings">
+                    <label>Popup page<select data-page-popup-target><option value="">Choose page</option>${(this.dashboard?.pages||[]).map(page=>`<option value="${this.attr(page.id)}" ${page.id===cardSettings.targetPageId?'selected':''}>${this.esc(page.title||page.id)}</option>`).join('')}</select></label>
+                    <div class="subgrid"><label class="toggleline"><input type="checkbox" data-card-setting-bool="showTitle" ${checked(cardSettings.showTitle!==false)}> Title</label><label class="toggleline"><input type="checkbox" data-card-setting-bool="showSummary" ${checked(cardSettings.showSummary!==false)}> Summary</label></div>
+                    <p class="hint">The card switch controls every light, switch, shutter, and AC used on the selected page, including entities of Room cards on that page.</p>
+                    <b>Page OFF behavior</b><div class="subgrid">${[['lights','Turn off lights'],['switches','Turn off switches'],['closeCovers','Close shutters'],['turnOffClimate','Turn off AC']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-toggle="${f}" ${checked(cardSettings.roomToggle?.[f] ?? ['lights','switches'].includes(f))}> ${l}</label>`).join('')}</div>
+                    <b>Page ON behavior</b><div class="subgrid">${[['turnOnLights','Turn on lights'],['turnOnSwitches','Turn on switches'],['openCovers','Open shutters'],['turnOnClimate','Turn on AC']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-toggle="${f}" ${checked(cardSettings.roomToggle?.[f] ?? ['turnOnLights','turnOnSwitches'].includes(f))}> ${l}</label>`).join('')}</div>
+                 </div></details>`:''}
                  ${['Page','Navigation','NavigationButton'].includes(c.type)?`<details open><summary>Page navigation</summary><div class="panel-settings"><label>Target page ID<input data-card-setting-text="targetPageId" value="${this.attr(cardSettings.targetPageId||'')}"></label><div class="subgrid"><label class="toggleline"><input type="checkbox" data-card-setting-bool="showTitle" ${checked(cardSettings.showTitle!==false)}> Title</label><label class="toggleline"><input type="checkbox" data-card-setting-bool="showSummary" ${checked(cardSettings.showSummary!==false)}> Summary</label></div></div></details>`:''}
                  ${['Text','Header'].includes(c.type)?`<details open><summary>Text</summary><div class="panel-settings"><label>Text<textarea class="compact-textarea" data-custom-text>${this.esc(c.customText||'')}</textarea></label><div class="two"><label>Font scale<input type="number" min=".5" max="2" step=".05" data-card-setting-number="fontScale" value="${cardSettings.fontScale||1}"></label><label>Max lines<input type="number" min="1" max="20" data-card-setting-number="maxLines" value="${cardSettings.maxLines||6}"></label></div><label>Alignment<select data-card-setting-select="alignment">${['start','center','end'].map(x=>`<option ${x===(cardSettings.alignment||'start')?'selected':''}>${x}</option>`).join('')}</select></label><label class="toggleline"><input type="checkbox" data-card-setting-bool="bold" ${checked(cardSettings.bold)}> Bold</label></div></details>`:''}
                  ${c.type==='Connectivity'?`<details open><summary>Connectivity</summary><div class="panel-settings"><div class="subgrid">${[['showWifi','Wi-Fi'],['showHomeAssistant','Home Assistant'],['showInternet','Internet']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-card-setting-bool="${f}" ${checked(cardSettings[f])}> ${l}</label>`).join('')}</div>${[['wifiMode','Wi-Fi mode'],['homeAssistantMode','HA mode'],['internetMode','Internet mode']].map(([f,l])=>`<label>${l}<select data-card-setting-select="${f}">${['Hidden','IconOnly','TextOnly','IconAndText'].map(x=>`<option ${x===(cardSettings[f]||'IconAndText')?'selected':''}>${x}</option>`).join('')}</select></label>`).join('')}</div></details>`:''}
@@ -1222,10 +1269,16 @@ class StipsPanelEditor extends HTMLElement {
             </div></details>`:''}
             ${this.draft?`<details><summary>PIN protection</summary><div class="panel-settings"><div class="subgrid">${[['settings','Settings'],['dashboardEdit','Dashboard edit'],['cardEdit','Card edit'],['navigationEdit','Navigation edit'],['exitKiosk','Exit kiosk'],['showInterfaceBars','Show interface bars'],['floatingProtectedActions','Floating actions'],['installerAdvanced','Installer advanced']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-pin-bool="${f}" ${checked(pin[f] ?? (f!=='settings'&&f!=='showInterfaceBars'&&f!=='floatingProtectedActions'))}> ${l}</label>`).join('')}</div></div></details>`:''}
             ${this.draft?`<details><summary>Sensor alerts</summary><div class="panel-settings">
-              <div class="subgrid">${[['enabled','Alerts enabled'],['wakeScreen','Wake screen'],['showPopup','Popup'],['soundEnabled','Sound']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-alert-bool="${f}" ${checked(alerts[f] ?? f!=='enabled')}> ${l}</label>`).join('')}</div>
+              <label>Activation source<select data-alert-select="activationSource"><option value="LocalPanel" ${!alertHa?'selected':''}>Local panel</option><option value="HomeAssistantEntity" ${alertHa?'selected':''}>Home Assistant entity</option></select></label>
+              ${alertHa?`<label>Control entity <small>input_boolean or switch; binary_sensor is follow-only</small><input list="stips-alert-activation-entities" data-alert-text="activationEntityId" placeholder="input_boolean.stips_alerts" value="${this.attr(alerts.activationEntityId||'')}"><datalist id="stips-alert-activation-entities">${alertEntityOptions}</datalist></label>
+              ${alerts.activationEntityId?`<p class="hint">Current state: <b>${this.esc(this._hass?.states?.[alerts.activationEntityId]?.state==='on'?'Armed':this._hass?.states?.[alerts.activationEntityId]?.state==='off'?'Disarmed':'Unavailable – not armed')}</b></p>`:''}
+              <label>Control mode<select data-alert-select="activationControlMode"><option value="FollowHomeAssistant" ${alerts.activationControlMode!=='TwoWay'?'selected':''}>Follow HA only</option><option value="TwoWay" ${alerts.activationControlMode==='TwoWay'?'selected':''} ${alertReadOnly?'disabled':''}>Two-way synchronization</option></select></label>
+              <p class="hint">Create an Input Boolean helper in Home Assistant (Settings → Devices &amp; services → Helpers → Toggle), for example input_boolean.stips_alerts, then select it here.</p>`:''}
+              <div class="subgrid">${[...(alertHa?[]:[['enabled','Alerts enabled']]),['wakeScreen','Wake screen'],['showPopup','Popup'],['soundEnabled','Sound']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-alert-bool="${f}" ${checked(alerts[f] ?? f!=='enabled')}> ${l}</label>`).join('')}</div>
+              <div class="two"><label>Arming delay<select data-alert-delay="armingDelaySeconds">${delayOptions(alerts.armingDelaySeconds)}</select></label><label>Alarm delay<select data-alert-delay="triggerDelaySeconds">${delayOptions(alerts.triggerDelaySeconds)}</select></label></div>
               <label>Tone<select data-alert-select="selectedTone">${['Emergency','Seismic','Evacuation','Siren','Alert','Pulse','Chime'].map(x=>`<option value="${x}" ${x===(alerts.selectedTone||'Siren')?'selected':''}>${x}</option>`).join('')}</select></label>
               <label>Volume <b>${Number(alerts.volume??80)}%</b><input type="range" min="0" max="100" data-alert-number="volume" value="${Number(alerts.volume??80)}"></label>
-              <label>Rules <small>One per line: entity_id | trigger state | custom label</small><textarea class="compact-textarea rules" data-alert-rules>${this.esc(alertRules)}</textarea></label>
+              <label>Rules <small>One per line: entity_id | trigger state | custom label | alarm delay seconds (blank = default, 0 = instant)</small><textarea class="compact-textarea rules" data-alert-rules>${this.esc(alertRules)}</textarea></label>
             </div></details>`:''}
             <details><summary>Revision history</summary><div class="revisions">${revisionHtml}</div></details>
             <details><summary>Advanced JSON editor</summary><textarea id="json">${jsonText}</textarea><button class="wide" data-apply-json>Apply JSON draft</button></details>
@@ -1321,6 +1374,7 @@ class StipsPanelEditor extends HTMLElement {
     qa('[data-room-text]').forEach(x=>x.addEventListener('change',e=>this.updateCardRoom(e.target.dataset.roomText,e.target.value)));
     qa('[data-room-bool]').forEach(x=>x.addEventListener('change',e=>this.updateCardRoom(e.target.dataset.roomBool,e.target.checked)));
     q('[data-room-card-area]')?.addEventListener('change',e=>this.updateRoomCardField('areaId',e.target.value));
+    q('[data-page-popup-target]')?.addEventListener('change',e=>this.updatePagePopupTarget(e.target.value));
     q('[data-room-domains]')?.addEventListener('change',e=>this.updateRoomCardField('visibleDomains',e.target.value.split(',').filter(Boolean)));
     q('[data-room-layout]')?.addEventListener('change',e=>this.updateRoomCardField('entityLayout',e.target.value));
     qa('[data-room-toggle]').forEach(x=>x.addEventListener('change',e=>this.updateRoomToggle(e.target.dataset.roomToggle,e.target.checked)));
@@ -1349,6 +1403,13 @@ class StipsPanelEditor extends HTMLElement {
     qa('[data-alert-select]').forEach(x=>x.addEventListener('change',e=>this.updateAlertField(e.target.dataset.alertSelect,e.target.value)));
     qa('[data-alert-number]').forEach(x=>x.addEventListener('change',e=>this.updateAlertField(e.target.dataset.alertNumber,Number(e.target.value))));
     q('[data-alert-rules]')?.addEventListener('change',e=>this.updateAlertRules(e.target.value));
+    qa('[data-alert-delay]').forEach(x=>x.addEventListener('change',e=>this.updateAlertField(e.target.dataset.alertDelay,Math.max(0,Math.min(600,Number(e.target.value)||0)))));
+    qa('[data-alert-text]').forEach(x=>x.addEventListener('change',e=>{
+      const value=e.target.value.trim()||null;
+      this.updateAlertField(e.target.dataset.alertText,value);
+      // A binary_sensor can only be followed; never leave it in two-way mode.
+      if(value?.startsWith('binary_sensor.'))this.updateAlertField('activationControlMode','FollowHomeAssistant');
+    }));
     qa('[data-topbar]').forEach(x=>x.addEventListener('change',e=>this.updateTopBarField(e.target.dataset.topbar,e.target.value)));
     qa('[data-nav-visible]').forEach(x=>x.addEventListener('change',e=>this.updateNavVisibility(e.target.dataset.navVisible,e.target.checked)));
     qa('[data-floating-bool]').forEach(x=>x.addEventListener('change',e=>this.updateFloatingField(e.target.dataset.floatingBool,e.target.checked)));
@@ -1373,8 +1434,8 @@ class StipsPanelEditor extends HTMLElement {
     q('[data-picker-apply]')?.addEventListener('click',()=>this.applyPicker());
   }
 
-  cardTypes() { return ['Tile','EntityState','EntitiesList','Button','Toggle','Light','RgbLight','MultiLight','Switch','Climate','Thermostat','Cover','Fan','Lock','Alarm','Scene','Script','Sensor','Gauge','Progress','Graph','History','MultiSensor','Weather','Camera','Doorbell','Media','Vacuum','Presence','SecuritySummary','AlertControl','Energy','Area','Room','Clock','Date','Text','PanelBrightness','PanelVolume','Connectivity','QuickActions','BatteryStatus','Page','Navigation','NavigationButton','Header','Spacer','Divider','Image']; }
-  iconFor(t) { const m={Light:'☀',RgbLight:'◉',Climate:'♨',Thermostat:'♨',Cover:'▥',Room:'⌂',Weather:'☁',Clock:'◷',Date:'▣',Text:'T',Media:'▶',SecuritySummary:'⌂',AlertControl:'⚠',Page:'▤',Camera:'◉',BatteryStatus:'▰',Connectivity:'⌁',Fan:'✣',Lock:'▣',PanelBrightness:'☀',PanelVolume:'♪',Spacer:'·',Divider:'—'}; return m[t]||'◆'; }
+  cardTypes() { return ['Tile','EntityState','EntitiesList','Button','Toggle','Light','RgbLight','MultiLight','Switch','Climate','Thermostat','Cover','Fan','Lock','Alarm','Scene','Script','Sensor','Gauge','Progress','Graph','History','MultiSensor','Weather','Camera','Doorbell','Media','Vacuum','Presence','SecuritySummary','AlertControl','Energy','Area','Room','RoomPopup','PagePopup','Clock','Date','Text','PanelBrightness','PanelVolume','Connectivity','QuickActions','BatteryStatus','Page','Navigation','NavigationButton','Header','Spacer','Divider','Image']; }
+  iconFor(t) { const m={Light:'☀',RgbLight:'◉',Climate:'♨',Thermostat:'♨',Cover:'▥',Room:'⌂',RoomPopup:'▤',PagePopup:'▤',Weather:'☁',Clock:'◷',Date:'▣',Text:'T',Media:'▶',SecuritySummary:'⌂',AlertControl:'⚠',Page:'▤',Camera:'◉',BatteryStatus:'▰',Connectivity:'⌁',Fan:'✣',Lock:'▣',PanelBrightness:'☀',PanelVolume:'♪',Spacer:'·',Divider:'—'}; return m[t]||'◆'; }
   esc(v=''){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   attr(v=''){return this.esc(v);}
 
