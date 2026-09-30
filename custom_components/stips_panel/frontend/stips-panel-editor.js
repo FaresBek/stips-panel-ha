@@ -29,6 +29,7 @@ class StipsPanelEditor extends HTMLElement {
     this.areas = [];
     this.devices = [];
     this.picker = null;
+    this.importer = null;
     this.previewProfile = 'actual';
     this.previewOrientation = 'screen';
     this._entityCatalogCache = null;
@@ -628,6 +629,76 @@ class StipsPanelEditor extends HTMLElement {
     });
     const max=Math.max(0,...skyline);
     return {placements,height:max?max-gap:0};
+  }
+
+  async openImport() {
+    this.importer={loading:true,sources:[],selected:{},error:''};
+    this.render();
+    try {
+      const res=await this.call({type:'stips_panel/list_dashboards'});
+      // The screen being edited is not a useful source for itself.
+      this.importer.sources=(res.sources||[]).filter(s=>!(s.source_type==='screen'&&s.source_id===this.selectedId));
+    } catch(e) { this.importer.error=e?.message||String(e); }
+    this.importer.loading=false;
+    this.render();
+  }
+
+  /** Same rules as the panel's DashboardDefinition.withFreshIds: new ids, page links follow their pages. */
+  freshDashboard(source) {
+    const d=JSON.parse(JSON.stringify(source));
+    const nid=(prefix)=>`${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+    const pageIds=Object.fromEntries((d.pages||[]).map(p=>[p.id,nid('page')]));
+    const action=(a)=>a&&String(a.kind||'').endsWith('Navigate')&&pageIds[a.target]?{...a,target:pageIds[a.target]}:a;
+    d.id=nid('dashboard'); d.isDefault=false;
+    for (const page of d.pages||[]) {
+      page.id=pageIds[page.id];
+      for (const section of page.sections||[]) {
+        section.id=nid('section');
+        for (const card of section.cards||[]) {
+          card.id=nid('card');
+          card.tapAction=action(card.tapAction); card.doubleTapAction=action(card.doubleTapAction); card.longPressAction=action(card.longPressAction);
+          if (card.settings && pageIds[card.settings.targetPageId]) card.settings.targetPageId=pageIds[card.settings.targetPageId];
+        }
+      }
+    }
+    return d;
+  }
+
+  applyImport() {
+    const imp=this.importer; if(!imp||!this.draft) return;
+    const list=this.draft[this.projectSpace] ||= [];
+    const titles=new Set(list.map(x=>String(x.title||'').toLowerCase()));
+    let added=0;
+    for (const source of imp.sources) {
+      for (const dash of source.dashboards||[]) {
+        if (!imp.selected[`${source.source_type}:${source.source_id}:${dash.id}`]) continue;
+        const copy=this.freshDashboard(dash);
+        const base=copy.title||'Dashboard'; let title=base, n=2;
+        while (titles.has(title.toLowerCase())) title=`${base} (${n++})`;
+        titles.add(title.toLowerCase()); copy.title=title;
+        list.push(copy); added++;
+      }
+    }
+    this.importer=null;
+    if (added) { this.dashIndex=list.length-1; this.pageIndex=0; this.selectedCardId=''; this.draftSource='draft'; }
+    this.note(added?`Imported ${added} dashboard${added===1?'':'s'} into the draft. Push to screen to send them to the panel.`:'Nothing selected.');
+  }
+
+  importerHtml() {
+    const imp=this.importer; if(!imp) return '';
+    const count=Object.values(imp.selected).filter(Boolean).length;
+    const body=imp.loading?'<div class="empty big">Looking for dashboards…</div>'
+      :imp.error?`<div class="empty big">${this.esc(imp.error)}</div>`
+      :!imp.sources.length?'<div class="empty big">No other screens or shared dashboards have dashboards yet.</div>'
+      :imp.sources.map(s=>`<div class="import-source"><b>${this.esc(s.name)}</b><small>${s.source_type==='template'?'Shared dashboard':(s.online?'Screen · online':'Screen · offline (last synced copy)')}</small>
+        ${(s.dashboards||[]).map(d=>{const key=`${s.source_type}:${s.source_id}:${d.id}`;const pages=(d.pages||[]).length;const cards=(d.pages||[]).reduce((n,p)=>n+(p.sections||[]).reduce((m,x)=>m+(x.cards||[]).length,0),0);
+          return `<label class="toggleline import-row"><input type="checkbox" data-import-key="${this.attr(key)}" ${imp.selected[key]?'checked':''}> ${this.esc(d.title||'Dashboard')} <small>${pages} page${pages===1?'':'s'} · ${cards} card${cards===1?'':'s'}</small></label>`;}).join('')}</div>`).join('');
+    return `<div class="modal-backdrop" data-import-backdrop><section class="picker-modal" role="dialog" aria-modal="true">
+      <div class="picker-head"><div><span class="eyebrow">DISCOVER</span><h2>Import dashboards</h2></div><button class="icon-btn" data-import-close>×</button></div>
+      <p class="hint">Copy dashboards from another STIPS screen or a shared dashboard into this draft. Copies are independent and get new ids.</p>
+      <div class="entity-list">${body}</div>
+      <footer class="picker-actions"><span>${count} selected</span><div><button data-import-close>Cancel</button><button class="primary" data-import-apply ${count?'':'disabled'}>Add to draft</button></div></footer>
+    </section></div>`;
   }
 
   removeCard(id) {
@@ -1280,7 +1351,7 @@ class StipsPanelEditor extends HTMLElement {
               <label>Dashboard<select data-dashboard>${dashOpts}</select></label><label>Page<select data-page>${pageOpts}</select></label>
               <label>Screen layout<select data-preview-profile><option value="actual" ${this.previewProfile==='actual'?'selected':''}>Selected screen / Auto</option>${this.screenProfiles().map(x=>`<option value="${this.esc(x.key)}" ${x.key===this.previewProfile?'selected':''}>${this.esc(x.label)}</option>`).join('')}</select></label>
               <label>Layout orientation<select data-preview-orientation><option value="screen" ${this.previewOrientation==='screen'?'selected':''}>Screen setting</option><option value="Landscape" ${this.previewOrientation==='Landscape'?'selected':''}>Horizontal</option><option value="Portrait" ${this.previewOrientation==='Portrait'?'selected':''}>Vertical</option></select></label>
-              <span class="grow"></span><button data-add>＋ Add card</button><button data-save-template>Save shared</button>
+              <span class="grow"></span><button data-import ${!this.draft?'disabled':''}>⇣ Import dashboards</button><button data-add>＋ Add card</button><button data-save-template>Save shared</button>
             </div>
             ${this.draft?`<div class="preview-head"><div><b>${this.esc(d?.title||'Dashboard')}</b><span>${this.esc(p?.title||'Page')}</span></div><span>${this.esc(profile.label)} · drag cards to reorder</span></div>${this.simulatorHtml(this.cards,screen,panel,top,navItems)}`:'<div class="empty big">Waiting for a screen snapshot.</div>'}
           </main>
@@ -1422,7 +1493,7 @@ class StipsPanelEditor extends HTMLElement {
             <details><summary>Advanced JSON editor</summary><textarea id="json">${jsonText}</textarea><button class="wide" data-apply-json>Apply JSON draft</button></details>
           </aside>
         </div>
-      </div>${this.pickerHtml()}`;
+      </div>${this.pickerHtml()}${this.importerHtml()}`;
     this.bind();
     this.restoreUiState();
   }
@@ -1489,6 +1560,11 @@ class StipsPanelEditor extends HTMLElement {
     }
         qa('[data-del]').forEach(x=>x.onclick=(e)=>{e.stopPropagation();this.removeCard(x.dataset.del);});
     q('[data-add]')?.addEventListener('click',()=>this.openAddPicker());
+    q('[data-import]')?.addEventListener('click',()=>this.openImport());
+    qa('[data-import-close]').forEach(x=>x.addEventListener('click',()=>{this.importer=null;this.render();}));
+    q('[data-import-backdrop]')?.addEventListener('click',e=>{if(e.target===e.currentTarget){this.importer=null;this.render();}});
+    qa('[data-import-key]').forEach(x=>x.addEventListener('change',e=>{this.importer.selected[e.target.dataset.importKey]=e.target.checked;this.render();}));
+    q('[data-import-apply]')?.addEventListener('click',()=>this.applyImport());
     qa('[data-dup]').forEach(x=>x.onclick=(e)=>{e.stopPropagation();this.duplicateCard(x.dataset.dup);});
     qa('[data-shift]').forEach(x=>x.onclick=()=>{const [id,d]=x.dataset.shift.split('|');this.shiftCard(id,Number(d));});
     qa('[data-size]').forEach(x=>x.onclick=()=>{const [w,h]=x.dataset.size.split('x').map(Number);this.setCardSize(w,h);});
@@ -1632,6 +1708,10 @@ class StipsPanelEditor extends HTMLElement {
 .inspector-actions button{flex:1}
 .inspector-section{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--secondary-text-color,#98a2b3);margin-top:10px;font-weight:700}
 .size-presets{display:flex;gap:6px;flex-wrap:wrap}
+.import-source{padding:10px 4px;border-bottom:1px solid var(--divider-color,#303643)}
+.import-source>b{display:block}
+.import-source>small,.import-row small{color:var(--secondary-text-color,#98a2b3)}
+.import-row{display:flex;gap:8px;align-items:center;padding:4px 0}
 .size-presets button.active{background:var(--primary-color,#7c5cff);color:#fff}.sim-card{min-height:8px;margin:0}.sim-card .card-copy b{font-size:clamp(7px,var(--title-size,1.5cqw),24px)}.sim-card .card-copy small{font-size:clamp(5px,var(--subtitle-size,.9cqw),16px)}.sim-card .card-icon{font-size:clamp(10px,var(--icon-size,2cqw),32px);min-width:var(--icon-min,20px)}.sim-card .delete{font-size:clamp(10px,var(--title-size,1.5cqw),24px);padding:0 3px}.sim-bottom{height:var(--bottom-h);min-height:36px;background:var(--card-background-color,#171b24);border-top:1px solid var(--divider-color,#303643);display:flex;align-items:center;justify-content:space-around;padding:2px 1cqw}.sim-floating{position:absolute;z-index:20;width:var(--float-size);height:var(--float-size);min-width:18px;min-height:18px;border-radius:999px;padding:0;display:grid;place-items:center;align-content:center;gap:0;cursor:grab;box-shadow:0 3px 12px #0007}.sim-floating span{font-size:clamp(8px,1.8cqw,18px);line-height:1}.sim-floating small{font-size:clamp(4px,.7cqw,8px);line-height:1;margin-top:1px}.sim-floating.visible{background:var(--primary-color,#6750a4);border-color:#ffffff66;color:#fff}.sim-floating.hidden{background:transparent;border:2px dashed color-mix(in srgb,var(--primary-color,#6750a4) 70%,#fff);color:var(--primary-color,#9d87ff);box-shadow:none}
     .dash-card{border:1px solid var(--divider-color,#303643);border-radius:clamp(5px,1.4cqw,14px);background:var(--secondary-background-color,#10141c);padding:clamp(4px,1cqw,11px);display:flex;align-items:center;gap:clamp(3px,.8cqw,9px);overflow:hidden;cursor:grab}.dash-card.selected{outline:2px solid var(--primary-color,#7c5cff);outline-offset:-2px}.card-icon{font-size:20px;min-width:20px}.card-copy{min-width:0;flex:1}.card-copy b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.15}.card-copy small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--secondary-text-color,#98a2b3);margin-top:2px}
     .tabs{border-bottom:1px solid var(--divider-color,#303643);margin:-14px -14px 12px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center}.tabs button{border:0;background:transparent}.tabs span{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.card-inspector{margin-bottom:14px}.selected-preview{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;background:color-mix(in srgb,var(--primary-color,#6750a4) 10%,var(--secondary-background-color,#10141c));margin-bottom:11px}.selected-preview div{min-width:0}.selected-preview b,.selected-preview small{display:block;overflow:hidden;text-overflow:ellipsis}.selected-preview small{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.inspector,.panel-settings{display:grid;gap:10px}.inspector label,.panel-settings label,.field-label{font-size:11px;color:var(--secondary-text-color,#98a2b3)}.inspector input,.inspector select,.panel-settings select{width:100%;margin-top:4px}.inspector input[type=range]{display:block;width:100%;padding:0}.panel-settings .toggleline{display:flex;align-items:center;gap:8px;color:var(--primary-text-color,#fff)}.panel-settings .toggleline input{display:inline-block;width:auto;margin:0;padding:0}.panel-settings input[type=range]{display:block;width:100%;padding:0;margin-top:5px}.floating-settings{display:grid;gap:3px;margin-top:4px;padding:9px;border-radius:10px;background:color-mix(in srgb,var(--primary-color,#6750a4) 10%,var(--secondary-background-color,#10141c));border:1px solid color-mix(in srgb,var(--primary-color,#6750a4) 30%,var(--divider-color,#303643))}.floating-settings b{font-size:11px}.floating-settings span{font-size:10px;line-height:1.35;color:var(--secondary-text-color,#98a2b3)}.position-presets{display:grid;grid-template-columns:1fr 1fr;gap:6px}.position-presets button{padding:7px 8px;font-size:10px}.entity-chips{display:grid;gap:5px;margin:5px 0}.entity-chip{display:grid;padding:7px 8px;border:1px solid var(--divider-color,#303643);border-radius:9px;font-size:11px}.entity-chip small{font-size:9px;color:var(--secondary-text-color,#98a2b3);overflow:hidden;text-overflow:ellipsis}.entity-actions{display:flex;gap:6px;flex-wrap:wrap}.subgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}.hint,.empty{font-size:11px;line-height:1.45;color:var(--secondary-text-color,#98a2b3)}.empty.big{padding:50px 20px;text-align:center;grid-column:1/-1}.select-card{padding:35px 14px;text-align:center}.sync-note{display:grid;gap:3px;padding:9px;border-radius:10px;background:var(--secondary-background-color,#10141c)}.sync-note b{font-size:11px}.sync-note span{font-size:10px;color:var(--secondary-text-color,#98a2b3);line-height:1.4}details{margin-top:13px;border-top:1px solid var(--divider-color,#303643);padding-top:10px}summary{cursor:pointer;font-weight:700;font-size:12px;margin-bottom:8px}.revision{display:grid;grid-template-columns:auto 1fr;text-align:left;gap:2px 8px}.revision b{grid-row:1/3}.revision span,.revision small{font-size:10px}.revision small{color:var(--secondary-text-color,#98a2b3)}textarea{width:100%;height:330px;background:#090c11;color:#d9e1ec;border:1px solid var(--divider-color,#303643);border-radius:10px;padding:9px;font-family:ui-monospace,monospace;font-size:10px;resize:vertical;margin-bottom:8px}.compact-textarea{height:90px;margin:4px 0 0}.compact-textarea.rules{height:150px}

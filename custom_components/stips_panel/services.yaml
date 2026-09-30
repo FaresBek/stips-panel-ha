@@ -103,3 +103,17 @@ request_recovery:
   description: Re-send the newest stored project to an already-installed STIPS panel that lost its local project copies.
   fields:
     screen_id: { required: true, selector: { text: {} } }
+
+list_dashboards:
+  name: Discover dashboards
+  description: Lists dashboards of other STIPS panels and shared dashboards stored in Home Assistant. Returns a response; nothing is changed.
+  fields:
+    screen_id: { selector: { text: {} } }
+
+get_dashboards:
+  name: Get dashboards
+  description: Returns full dashboards from another STIPS panel or a shared dashboard so a panel can load them. Nothing is changed.
+  fields:
+    source_type: { required: true, selector: { select: { options: ["screen", "template"] } } }
+    source_id: { required: true, selector: { text: {} } }
+    dashboard_ids: { selector: { object: {} } }

@@ -60,6 +60,8 @@ The matching Android-model compatibility verification runs in the private STIPS 
 - The screen preview shows each card with its live Home Assistant state instead of a named box.
 - "Pack cards into gaps" is previewed with the panel's own packing, so the preview matches the wall panel.
 - Duplicate cards, move them earlier/later and use S/M/Wide/Tall/L size presets.
+- **Import dashboards** copies dashboards from another screen or a shared dashboard into the draft.
+- Panels can discover and load dashboards from other panels (Settings > Connectivity > Discover dashboards) through the new read-only `stips_panel.list_dashboards` and `stips_panel.get_dashboards` services.
 
 ## Release 1.5.8
 

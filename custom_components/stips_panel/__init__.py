@@ -21,7 +21,7 @@ import voluptuous as vol
 from homeassistant.components import frontend, websocket_api
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
@@ -32,6 +32,14 @@ from .const import DOMAIN, EVENT_PUSH, MAX_REVISIONS, ONLINE_TIMEOUT_SECONDS, ST
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 SCREEN_ID = vol.All(str, vol.Length(min=4, max=128))
+LIST_DASHBOARDS_SCHEMA = vol.Schema({vol.Optional("screen_id"): SCREEN_ID})
+GET_DASHBOARDS_SCHEMA = vol.Schema(
+    {
+        vol.Required("source_type"): vol.In(["screen", "template"]),
+        vol.Required("source_id"): vol.All(str, vol.Length(min=1, max=128)),
+        vol.Optional("dashboard_ids", default=[]): [str],
+    }
+)
 MAX_DIAGNOSTIC_BYTES = 3 * 1024 * 1024
 MAX_UPLOAD_CHUNK_BYTES = 768 * 1024
 MAX_APK_BYTES = 250 * 1024 * 1024
@@ -215,6 +223,80 @@ def _latest_project(manager: "StipsPanelManager", screen_id: str) -> dict[str, A
     if isinstance(desired, dict) and isinstance(desired.get("project"), dict):
         return deepcopy(desired["project"])
     return None
+
+
+def _dashboard_summary(dashboard: dict[str, Any]) -> dict[str, Any]:
+    pages = [page for page in dashboard.get("pages") or [] if isinstance(page, dict)]
+    cards = sum(
+        len(section.get("cards") or [])
+        for page in pages
+        for section in page.get("sections") or []
+        if isinstance(section, dict)
+    )
+    return {
+        "id": str(dashboard.get("id") or ""),
+        "title": str(dashboard.get("title") or "Dashboard"),
+        "page_count": len(pages),
+        "card_count": cards,
+    }
+
+
+def _source_dashboards(project: Any) -> list[dict[str, Any]]:
+    """Native dashboards of a stored project; Home Assistant-linked dashboards stay panel-specific."""
+    if not isinstance(project, dict):
+        return []
+    return [
+        dashboard
+        for dashboard in project.get("dashboards") or []
+        if isinstance(dashboard, dict) and dashboard.get("id") and not (
+            isinstance(dashboard.get("source"), dict) and "HomeAssistant" in str(dashboard["source"].get("kind", ""))
+        )
+    ]
+
+
+def _dashboard_sources(manager: "StipsPanelManager", exclude_screen_id: str | None, include_dashboards: bool) -> list[dict[str, Any]]:
+    """Dashboards other panels synced to Home Assistant, plus shared dashboards (templates)."""
+    sources: list[dict[str, Any]] = []
+    for screen_id, screen in manager.data["screens"].items():
+        if screen_id == exclude_screen_id:
+            continue
+        dashboards = _source_dashboards(_latest_project(manager, screen_id))
+        if not dashboards:
+            continue
+        item = _screen_with_connectivity(screen)
+        sources.append(
+            {
+                "source_type": "screen",
+                "source_id": screen_id,
+                "name": str(screen.get("screen_name") or screen_id),
+                "online": bool(item["online"]),
+                "last_seen": screen.get("last_seen"),
+                "dashboards": deepcopy(dashboards) if include_dashboards else [_dashboard_summary(d) for d in dashboards],
+            }
+        )
+    for template_id, template in manager.data["templates"].items():
+        dashboards = _source_dashboards(template.get("project"))
+        if not dashboards:
+            continue
+        sources.append(
+            {
+                "source_type": "template",
+                "source_id": template_id,
+                "name": str(template.get("name") or template_id),
+                "online": False,
+                "last_seen": template.get("updated"),
+                "dashboards": deepcopy(dashboards) if include_dashboards else [_dashboard_summary(d) for d in dashboards],
+            }
+        )
+    sources.sort(key=lambda item: (item["source_type"] != "screen", not item["online"], item["name"].lower()))
+    return sources
+
+
+def _source_project(manager: "StipsPanelManager", source_type: str, source_id: str) -> Any:
+    if source_type == "template":
+        template = manager.data["templates"].get(source_id)
+        return template.get("project") if isinstance(template, dict) else None
+    return _latest_project(manager, source_id)
 
 
 class StipsPanelManager:
@@ -877,6 +959,25 @@ async def _async_setup_manager(hass: HomeAssistant) -> bool:
     hass.services.async_register(DOMAIN, "sync_current", manager.sync_current, schema=SYNC_CURRENT_SCHEMA)
     hass.services.async_register(DOMAIN, "request_recovery", manager.request_recovery, schema=RECOVERY_SCHEMA)
 
+    # Read-only dashboard discovery for panels. Returns data to the calling panel; nothing is stored.
+    async def _list_dashboards(call: ServiceCall) -> ServiceResponse:
+        return {"sources": _dashboard_sources(manager, call.data.get("screen_id"), include_dashboards=False)}
+
+    async def _get_dashboards(call: ServiceCall) -> ServiceResponse:
+        project = _source_project(manager, call.data["source_type"], call.data["source_id"])
+        dashboards = _source_dashboards(project)
+        wanted = set(call.data.get("dashboard_ids") or [])
+        if wanted:
+            dashboards = [d for d in dashboards if d.get("id") in wanted]
+        return {"dashboards": deepcopy(dashboards)}
+
+    hass.services.async_register(
+        DOMAIN, "list_dashboards", _list_dashboards, schema=LIST_DASHBOARDS_SCHEMA, supports_response=SupportsResponse.ONLY
+    )
+    hass.services.async_register(
+        DOMAIN, "get_dashboards", _get_dashboards, schema=GET_DASHBOARDS_SCHEMA, supports_response=SupportsResponse.ONLY
+    )
+
     async def _admin_push(call: ServiceCall) -> None:
         await manager.push(call.data["screen_id"], call.data["project"], call.data.get("note", ""))
 
@@ -916,6 +1017,7 @@ async def _async_setup_manager(hass: HomeAssistant) -> bool:
         ws_install_update,
         ws_get_diagnostics_package,
         ws_provisioning_info,
+        ws_list_dashboards,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -966,6 +1068,14 @@ async def async_setup_entry(hass: HomeAssistant, _entry: ConfigEntry) -> bool:
 
 def _manager(hass: HomeAssistant) -> StipsPanelManager:
     return hass.data[DOMAIN]
+
+
+@websocket_api.websocket_command({vol.Required("type"): "stips_panel/list_dashboards"})
+@websocket_api.require_admin
+@callback
+def ws_list_dashboards(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Every screen's and shared template's dashboards, in full, for the editor's Import dashboards."""
+    connection.send_result(msg["id"], {"sources": _dashboard_sources(_manager(hass), None, include_dashboards=True)})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "stips_panel/list_screens"})
