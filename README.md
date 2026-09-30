@@ -4,7 +4,7 @@ The Home Assistant integration and visual dashboard editor for STIPS Panel Andro
 
 [![Open STIPS Panel Remote Manager in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=FaresBek&repository=stips-panel-ha&category=integration)
 
-This public repository contains only the Home Assistant distribution. The commercial Android application is maintained separately. Remote Manager **1.5.8** is compatible with STIPS Panel Android **1.7.0** and preserves existing manager storage, screen history, projects and deployed revisions.
+This public repository contains only the Home Assistant distribution. The commercial Android application is maintained separately. Remote Manager **1.5.9** is compatible with STIPS Panel Android **1.8.0** and preserves existing manager storage, screen history, projects and deployed revisions.
 
 ## Install with HACS
 
@@ -39,7 +39,7 @@ Restart Home Assistant, then add **STIPS Panel Remote Manager** from **Settings 
 
 The editor always starts from the complete project snapshot supplied by the Android panel or stored by Home Assistant. Fields that the visual editor does not understand remain in the snapshot instead of being discarded. Dashboard pushes create versioned desired revisions; the Android client validates and applies them atomically.
 
-Remote Manager 1.5.8 retains storage version 1 and is an in-place upgrade from the 1.4.x and 1.5.x releases.
+Remote Manager 1.5.9 retains storage version 1 and is an in-place upgrade from the 1.4.x and 1.5.x releases.
 
 ## Development
 
@@ -54,6 +54,14 @@ node --check custom_components/stips_panel/frontend/stips-panel-editor.js
 To publish a release, either push a `vX.Y.Z` tag, or open **Actions > Release > Run workflow** on `main` (this works from a phone browser) and enter the version from `manifest.json`. Both build `stips-panel-remote-manager.zip` and create the GitHub release that HACS installs.
 
 The matching Android-model compatibility verification runs in the private STIPS Panel development repository before a distribution update is published here.
+
+## Release 1.5.9
+
+- The screen preview shows each card with its live Home Assistant state instead of a named box.
+- "Pack cards into gaps" is previewed with the panel's own packing, so the preview matches the wall panel.
+- Duplicate cards, move them earlier/later and use S/M/Wide/Tall/L size presets.
+- **Import dashboards** copies dashboards from another screen or a shared dashboard into the draft.
+- Panels can discover and load dashboards from other panels (Settings > Connectivity > Discover dashboards) through the new read-only `stips_panel.list_dashboards` and `stips_panel.get_dashboards` services.
 
 ## Release 1.5.8
 

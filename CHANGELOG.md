@@ -1,3 +1,12 @@
+# 1.5.9
+
+- Live card preview from Home Assistant states.
+- Preview "Pack cards into gaps" with the panel's packing; fixed-row previews no longer overflow.
+- Duplicate, reorder and size-preset cards from the inspector or the preview.
+- Import dashboards from another screen or a shared dashboard into the draft.
+- Add read-only `list_dashboards` / `get_dashboards` response services for panel dashboard discovery.
+- Compatible with STIPS Panel Android 1.8.0; storage version 1 and complete project snapshots are unchanged.
+
 # 1.5.8
 
 - Add STIPS Alerts activation source, control entity, Follow HA / Two-way control mode and the entity's current state.

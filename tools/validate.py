@@ -8,7 +8,7 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 INTEGRATION = ROOT / "custom_components/stips_panel"
-EXPECTED_VERSION = "1.5.8"
+EXPECTED_VERSION = "1.5.9"
 
 
 def main() -> None:

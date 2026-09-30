@@ -29,6 +29,7 @@ class StipsPanelEditor extends HTMLElement {
     this.areas = [];
     this.devices = [];
     this.picker = null;
+    this.importer = null;
     this.previewProfile = 'actual';
     this.previewOrientation = 'screen';
     this._entityCatalogCache = null;
@@ -506,6 +507,200 @@ class StipsPanelEditor extends HTMLElement {
     this.render();
   }
 
+  duplicateCard(id) {
+    for (const s of this.page?.sections||[]) {
+      const i=(s.cards||[]).findIndex(c=>c.id===id);
+      if (i<0) continue;
+      const copy=JSON.parse(JSON.stringify(s.cards[i]));
+      copy.id=`ha-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+      s.cards.splice(i+1,0,copy);
+      this.selectedCardId=copy.id;
+      this.draftSource='draft';
+      this.render();
+      return;
+    }
+  }
+
+  shiftCard(id, delta) {
+    for (const s of this.page?.sections||[]) {
+      const i=(s.cards||[]).findIndex(c=>c.id===id);
+      const j=i+delta;
+      if (i<0 || j<0 || j>=s.cards.length) continue;
+      [s.cards[i],s.cards[j]]=[s.cards[j],s.cards[i]];
+      this.draftSource='draft';
+      this.render();
+      return;
+    }
+  }
+
+  setCardSize(width, height) {
+    const c=this.selectedCard; if(!c) return;
+    c.layout={...(c.layout||{}),width,height,custom:false};
+    this.draftSource='draft';
+    this.render();
+  }
+
+  typeLabel(t) {
+    return ({RgbLight:'RGB light',MultiLight:'Light group',EntityState:'Entity state',EntitiesList:'Entities list',MultiSensor:'Sensor group',SecuritySummary:'Home secure',AlertControl:'Alerts',PanelBrightness:'Panel brightness',PanelVolume:'Panel volume',QuickActions:'Quick actions',BatteryStatus:'Battery status',NavigationButton:'Navigation button',RoomPopup:'Room popup',PagePopup:'Page popup'})[t]||String(t||'').replace(/([a-z])([A-Z])/g,'$1 $2');
+  }
+
+  /** Live card body for the screen preview, built from the current Home Assistant state. */
+  cardPreviewHtml(card) {
+    const st=this._hass?.states||{};
+    const ids=card.entityIds||[];
+    const s=st[ids[0]];
+    const a=s?.attributes||{};
+    const style=card.style||{};
+    const name=card.title||(s?.attributes?.friendly_name)||this.typeLabel(card.type);
+    const unavailable=!s || ['unavailable','unknown'].includes(s.state);
+    const on=s && ['on','open','opening','playing','heat','cool','auto','heat_cool','dry','fan_only','unlocked','home'].includes(s.state);
+    const cap=(v)=>String(v??'').replace(/_/g,' ').replace(/^./,m=>m.toUpperCase());
+    const num=(v)=>Number.isFinite(Number(v))?Number(v):null;
+    const value=s?`${s.state}${a.unit_of_measurement?` ${a.unit_of_measurement}`:''}`:'';
+    const pageTitle=(id)=>(this.dashboard?.pages||[]).find(x=>x.id===id)?.title||'';
+    const head=(state)=>`<div class="pv-head">${style.showIcon!==false?`<span class="pv-icon ${on?'on':''}">${this.iconFor(card.type)}</span>`:''}<div class="pv-copy">${style.showEntityName!==false?`<b>${this.esc(name)}</b>`:''}${style.showState!==false&&state?`<small>${this.esc(state)}</small>`:''}</div></div>`;
+    const bar=(pct,label='')=>`<div class="pv-bar"><i style="width:${Math.max(0,Math.min(100,pct))}%"></i></div>${label?`<small class="pv-sub">${this.esc(label)}</small>`:''}`;
+    const settings=card.settings||{};
+    switch (card.type) {
+      case 'Header': return `<div class="pv-header">${this.esc(card.title||'Section')}</div>`;
+      case 'Divider': return `<hr class="pv-divider">`;
+      case 'Spacer': return `<div class="pv-spacer">Spacer</div>`;
+      case 'Text': return `${style.showEntityName!==false&&card.title?`<b class="pv-title">${this.esc(card.title)}</b>`:''}<div class="pv-text" style="text-align:${this.esc(settings.alignment||'start')};${settings.bold?'font-weight:700':''}">${this.esc(card.customText||'')}</div>`;
+      case 'Clock': { const d=new Date(); return `<div class="pv-big">${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:settings.use24Hour===false})}</div>${settings.showDate!==false?`<small class="pv-sub">${d.toLocaleDateString([], {weekday:'long',day:'numeric',month:'long'})}</small>`:''}`; }
+      case 'Date': return `<div class="pv-mid">${new Date().toLocaleDateString([], {weekday:'long',day:'numeric',month:'long'})}</div>`;
+      case 'Weather': return `${head(unavailable?'Unavailable':cap(s.state))}<div class="pv-big">${num(a.temperature)!==null?`${a.temperature}${a.temperature_unit||'°'}`:'—'}</div>${a.humidity!=null?`<small class="pv-sub">Humidity ${a.humidity}%</small>`:''}`;
+      case 'Light': case 'RgbLight': case 'MultiLight': case 'Switch': case 'Toggle': case 'Fan': case 'Button': case 'Tile': {
+        const pct=num(a.brightness)!==null?Math.round(a.brightness/2.55):num(a.percentage);
+        const state=unavailable?'Unavailable':(on?`On${pct!=null?` · ${pct}%`:''}`:'Off');
+        const color=Array.isArray(a.rgb_color)?`rgb(${a.rgb_color.join(',')})`:'';
+        return `${head(ids.length>1?`${ids.filter(id=>st[id]?.state==='on').length} of ${ids.length} on`:state)}${card.type==='RgbLight'&&color?`<div class="pv-swatch" style="background:${color}"></div>`:''}${pct!=null&&on&&card.features?.showBrightness!==false?bar(pct):''}${unavailable?'':`<span class="pv-toggle ${on?'on':''}"></span>`}`;
+      }
+      case 'Climate': case 'Thermostat': return `${head(unavailable?'Unavailable':cap(s.state))}<div class="pv-big">${num(a.temperature)!==null?`${a.temperature}°`:'—'}</div><small class="pv-sub">${a.current_temperature!=null?`Now ${a.current_temperature}°`:''}${a.fan_mode?` · Fan ${this.esc(a.fan_mode)}`:''}</small>${card.features?.showClimateMode!==false&&Array.isArray(a.hvac_modes)?`<div class="pv-chips">${a.hvac_modes.slice(0,6).map(m=>`<span class="${m===s.state?'on':''}">${this.esc(cap(m))}</span>`).join('')}</div>`:''}`;
+      case 'Cover': { const pos=num(a.current_position); return `${head(unavailable?'Unavailable':`${cap(s.state)}${pos!=null?` · ${pos}%`:''}`)}${pos!=null?bar(pos):''}<div class="pv-chips"><span>▲</span><span>■</span><span>▼</span></div>`; }
+      case 'Sensor': case 'EntityState': case 'BatteryStatus': case 'MultiSensor':
+        if (card.type==='MultiSensor'||ids.length>1) return `${head('')}${ids.slice(0,5).map(id=>`<div class="pv-row"><span>${this.esc(st[id]?.attributes?.friendly_name||id)}</span><b>${this.esc(st[id]?`${st[id].state}${st[id].attributes?.unit_of_measurement?` ${st[id].attributes.unit_of_measurement}`:''}`:'—')}</b></div>`).join('')}`;
+        return `${head('')}<div class="pv-big">${this.esc(unavailable?'—':value)}</div>`;
+      case 'Gauge': { const v=num(s?.state), max=num(a.max)??100; const pct=v==null?0:Math.max(0,Math.min(100,v/max*100)); return `${head('')}<div class="pv-gauge" style="--p:${pct}"><span>${this.esc(unavailable?'—':value)}</span></div>`; }
+      case 'Progress': { const v=num(s?.state); return `${head(unavailable?'—':value)}${bar(v??0)}`; }
+      case 'Graph': case 'History': return `${head(unavailable?'':value)}<svg class="pv-graph" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline points="0,22 12,18 24,20 36,12 48,15 60,8 72,13 84,6 100,10"/></svg><small class="pv-sub">Last ${this.esc(String(card.graph?.hours||24))} h</small>`;
+      case 'Media': return `${head(unavailable?'Unavailable':cap(s.state))}<small class="pv-sub">${this.esc(a.media_title||a.app_name||'')}</small><div class="pv-chips"><span>⏮</span><span>${s?.state==='playing'?'⏸':'▶'}</span><span>⏭</span></div>`;
+      case 'Camera': return `<div class="pv-camera"><span>◉</span><small>${this.esc(name)}</small></div>`;
+      case 'Lock': return head(unavailable?'Unavailable':cap(s.state));
+      case 'Room': case 'RoomPopup': case 'Area': {
+        const areaId=settings.areaId||card.room?.areaId||'';
+        const area=this.areas.find(x=>(x.area_id||x.id)===areaId);
+        const inArea=this.entityCatalog().filter(e=>e.areaId&&e.areaId===areaId&&['light','switch','cover','climate'].includes(e.domain));
+        const active=inArea.filter(e=>['on','open','heat','cool','auto','dry','fan_only'].includes(e.state)).length;
+        const label=area?.name||card.title||'Choose area';
+        if (card.type==='RoomPopup') return head(`${label} · ${active} on`);
+        return `${head(`${active} of ${inArea.length} on`)}<div class="pv-room">${inArea.slice(0,6).map(e=>`<span class="${['on','open','heat','cool','auto'].includes(e.state)?'on':''}">${this.esc(e.name)}</span>`).join('')}</div>`;
+      }
+      case 'AlertControl': {
+        const al=this.draft?.panel?.alerts||{};
+        const ha=al.activationSource==='HomeAssistantEntity';
+        const es=ha?st[al.activationEntityId]?.state:null;
+        const armed=ha?es==='on':al.enabled===true;
+        return `${head(ha&&!['on','off'].includes(es)?'Unavailable · not armed':(armed?'Armed':'Off'))}<span class="pv-toggle ${armed?'on':''}"></span>`;
+      }
+      case 'SecuritySummary': {
+        const rules=card.securityRules||[];
+        const bad=rules.filter(r=>!(r.secureStates||[]).includes(st[r.entityId]?.state)).length;
+        return head(rules.length?(bad?`${bad} need attention`:'Home secure'):'Choose entities');
+      }
+      case 'Page': case 'PagePopup': case 'NavigationButton': return head(pageTitle(settings.targetPageId||card.tapAction?.target)||'Choose page');
+      case 'Connectivity': return head('Wi-Fi ● · Home Assistant ●');
+      case 'PanelBrightness': case 'PanelVolume': return `${head('')}${bar(60)}`;
+      default: return head(unavailable?(ids.length?'Unavailable':''):cap(value));
+    }
+  }
+
+  /** Same skyline packing as the panel's MasonryDashboardGrid, in layout pixels. */
+  packCards(specs, totalUnits, gap) {
+    const skyline=new Array(totalUnits).fill(0);
+    const placements=specs.map(spec=>{
+      const span=Math.max(1,Math.min(totalUnits,spec.units));
+      let bestX=0,bestY=Infinity;
+      for (let x=0;x+span<=totalUnits;x++) {
+        let y=0; for (let u=x;u<x+span;u++) y=Math.max(y,skyline[u]);
+        if (y<bestY) {bestY=y;bestX=x;}
+      }
+      for (let u=bestX;u<bestX+span;u++) skyline[u]=bestY+spec.height+gap;
+      return {...spec,x:bestX,y:bestY,span};
+    });
+    const max=Math.max(0,...skyline);
+    return {placements,height:max?max-gap:0};
+  }
+
+  async openImport() {
+    this.importer={loading:true,sources:[],selected:{},error:''};
+    this.render();
+    try {
+      const res=await this.call({type:'stips_panel/list_dashboards'});
+      // The screen being edited is not a useful source for itself.
+      this.importer.sources=(res.sources||[]).filter(s=>!(s.source_type==='screen'&&s.source_id===this.selectedId));
+    } catch(e) { this.importer.error=e?.message||String(e); }
+    this.importer.loading=false;
+    this.render();
+  }
+
+  /** Same rules as the panel's DashboardDefinition.withFreshIds: new ids, page links follow their pages. */
+  freshDashboard(source) {
+    const d=JSON.parse(JSON.stringify(source));
+    const nid=(prefix)=>`${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+    const pageIds=Object.fromEntries((d.pages||[]).map(p=>[p.id,nid('page')]));
+    const action=(a)=>a&&String(a.kind||'').endsWith('Navigate')&&pageIds[a.target]?{...a,target:pageIds[a.target]}:a;
+    d.id=nid('dashboard'); d.isDefault=false;
+    for (const page of d.pages||[]) {
+      page.id=pageIds[page.id];
+      for (const section of page.sections||[]) {
+        section.id=nid('section');
+        for (const card of section.cards||[]) {
+          card.id=nid('card');
+          card.tapAction=action(card.tapAction); card.doubleTapAction=action(card.doubleTapAction); card.longPressAction=action(card.longPressAction);
+          if (card.settings && pageIds[card.settings.targetPageId]) card.settings.targetPageId=pageIds[card.settings.targetPageId];
+        }
+      }
+    }
+    return d;
+  }
+
+  applyImport() {
+    const imp=this.importer; if(!imp||!this.draft) return;
+    const list=this.draft[this.projectSpace] ||= [];
+    const titles=new Set(list.map(x=>String(x.title||'').toLowerCase()));
+    let added=0;
+    for (const source of imp.sources) {
+      for (const dash of source.dashboards||[]) {
+        if (!imp.selected[`${source.source_type}:${source.source_id}:${dash.id}`]) continue;
+        const copy=this.freshDashboard(dash);
+        const base=copy.title||'Dashboard'; let title=base, n=2;
+        while (titles.has(title.toLowerCase())) title=`${base} (${n++})`;
+        titles.add(title.toLowerCase()); copy.title=title;
+        list.push(copy); added++;
+      }
+    }
+    this.importer=null;
+    if (added) { this.dashIndex=list.length-1; this.pageIndex=0; this.selectedCardId=''; this.draftSource='draft'; }
+    this.note(added?`Imported ${added} dashboard${added===1?'':'s'} into the draft. Push to screen to send them to the panel.`:'Nothing selected.');
+  }
+
+  importerHtml() {
+    const imp=this.importer; if(!imp) return '';
+    const count=Object.values(imp.selected).filter(Boolean).length;
+    const body=imp.loading?'<div class="empty big">Looking for dashboards…</div>'
+      :imp.error?`<div class="empty big">${this.esc(imp.error)}</div>`
+      :!imp.sources.length?'<div class="empty big">No other screens or shared dashboards have dashboards yet.</div>'
+      :imp.sources.map(s=>`<div class="import-source"><b>${this.esc(s.name)}</b><small>${s.source_type==='template'?'Shared dashboard':(s.online?'Screen · online':'Screen · offline (last synced copy)')}</small>
+        ${(s.dashboards||[]).map(d=>{const key=`${s.source_type}:${s.source_id}:${d.id}`;const pages=(d.pages||[]).length;const cards=(d.pages||[]).reduce((n,p)=>n+(p.sections||[]).reduce((m,x)=>m+(x.cards||[]).length,0),0);
+          return `<label class="toggleline import-row"><input type="checkbox" data-import-key="${this.attr(key)}" ${imp.selected[key]?'checked':''}> ${this.esc(d.title||'Dashboard')} <small>${pages} page${pages===1?'':'s'} · ${cards} card${cards===1?'':'s'}</small></label>`;}).join('')}</div>`).join('');
+    return `<div class="modal-backdrop" data-import-backdrop><section class="picker-modal" role="dialog" aria-modal="true">
+      <div class="picker-head"><div><span class="eyebrow">DISCOVER</span><h2>Import dashboards</h2></div><button class="icon-btn" data-import-close>×</button></div>
+      <p class="hint">Copy dashboards from another STIPS screen or a shared dashboard into this draft. Copies are independent and get new ids.</p>
+      <div class="entity-list">${body}</div>
+      <footer class="picker-actions"><span>${count} selected</span><div><button data-import-close>Cancel</button><button class="primary" data-import-apply ${count?'':'disabled'}>Add to draft</button></div></footer>
+    </section></div>`;
+  }
+
   removeCard(id) {
     const page=this.page;
     if(!page) return;
@@ -880,7 +1075,7 @@ class StipsPanelEditor extends HTMLElement {
       <span class="entity-state">${this.esc(e.state)}</span>
       <span class="suggested">${this.esc(this.suggestedType(e))}</span>
     </button>`).join('');
-    const builtins=this.builtinCardTypes().map(t=>`<button class="builtin-card ${this.picker.cardType===t?'selected':''}" data-builtin="${t}"><span>${this.iconFor(t)}</span><b>${this.esc(t.replace(/([a-z])([A-Z])/g,'$1 $2'))}</b></button>`).join('');
+    const builtins=this.builtinCardTypes().map(t=>`<button class="builtin-card ${this.picker.cardType===t?'selected':''}" data-builtin="${t}"><span>${this.iconFor(t)}</span><b>${this.esc(this.typeLabel(t))}</b></button>`).join('');
     return `<div class="modal-backdrop" data-picker-backdrop><section class="picker-modal" role="dialog" aria-modal="true">
       <div class="picker-head"><div><span class="eyebrow">HOME ASSISTANT</span><h2>${this.picker.mode==='add'?'Add card':'Choose entities'}</h2></div><button class="icon-btn" data-picker-close>×</button></div>
       ${this.picker.mode==='add'?`<div class="picker-tabs"><button data-picker-tab="entities" class="${this.picker.tab==='entities'?'active':''}">Entities</button><button data-picker-tab="builtins" class="${this.picker.tab==='builtins'?'active':''}">Built-in</button></div>`:''}
@@ -911,20 +1106,30 @@ class StipsPanelEditor extends HTMLElement {
     const floating=panel.floatingButton||{};
     const topHeight={Small:42,Large:54,ExtraLarge:66}[top.size||'Small']||42;
     const navSize=compact?62:72;
-    const cardHtml=this.cards.map(card=>{
-      const w=Math.max(.1,Math.min(columns,Number(card.layout?.width||1)));
-      const h=Math.max(.1,Math.min(4,Number(card.layout?.height||1)));
-      const widthUnits=Math.max(1,Math.min(columns*20,Math.round(w*20)));
-      const extraGaps=Math.max(0,Math.ceil(h)-1);
-      const cardHeight=profile.row*h + profile.gap*extraGaps;
-      const heightCqw=(cardHeight/profile.width*100).toFixed(4);
-      const title=card.title||card.type;
-      const entity=(card.entityIds||[])[0];
+    const packed=this.dashboard?.autoCompact!==false;
+    const units=columns*100;
+    const spacingMul=String(scale.spacing||'Normal').toLowerCase()==='compact'?.82:(String(scale.spacing||'Normal').toLowerCase()==='comfortable'?1.15:1);
+    const gapPx=profile.gap*spacingMul;
+    const specs=this.cards.map(card=>{
+      const w=Math.max(.01,Math.min(columns,Number(card.layout?.width||1)));
+      const h=Math.max(.01,Math.min(100,Number(card.layout?.height||1)));
+      return {card,w,h,units:Math.max(1,Math.min(units,Math.round(w*100))),height:profile.row*h+gapPx*Math.max(0,Math.ceil(h)-1)};
+    });
+    const pack=packed?this.packCards(specs,units,gapPx):null;
+    const toCqw=(px)=>(px/profile.width*100).toFixed(4);
+    const cardHtml=specs.map((spec,i)=>{
+      const card=spec.card;
       const contentScale=Math.max(.75,Math.min(1.75,Number(card.style?.contentScale||1)));
       const titleSize=(1.5*contentScale*scale.cardScale*scale.textScale).toFixed(3), subtitleSize=(.9*contentScale*scale.cardScale*scale.textScale).toFixed(3), iconSize=(2*contentScale*scale.cardScale*scale.iconScale).toFixed(3);
-      return `<article class="sim-card dash-card ${card.id===this.selectedCardId?'selected':''}" draggable="true" data-card="${this.esc(card.id)}" style="--title-size:${titleSize}cqw;--subtitle-size:${subtitleSize}cqw;--icon-size:${iconSize}cqw;--icon-min:${(20*contentScale).toFixed(1)}px;grid-column:span ${widthUnits};height:${heightCqw}cqw">
-        <div class="card-icon">${this.iconFor(card.type)}</div><div class="card-copy"><b>${this.esc(title)}</b><small>${this.esc(entity?this.entityLabel(entity):card.type)} · ${w}×${h}</small></div><button class="icon-btn delete" data-del="${this.esc(card.id)}">×</button>
-      </article>`;
+      const flat=['Header','Divider','Spacer'].includes(card.type);
+      const place=pack?pack.placements[i]:null;
+      const position=place
+        ?`position:absolute;left:${(place.x/units*100).toFixed(3)}%;width:${(place.span/units*100).toFixed(3)}%;top:${toCqw(place.y)}cqw;height:${toCqw(place.height)}cqw;padding:0 calc(var(--gap)/2)`
+        :`grid-column:span ${Math.max(1,Math.min(columns*20,Math.round(spec.w*20)))};height:${toCqw(spec.height)}cqw;padding:0 calc(var(--gap)/2)`;
+      return `<div class="sim-slot" style="${position}"><article class="sim-card dash-card live ${flat?'flat':''} ${card.id===this.selectedCardId?'selected':''}" draggable="true" data-card="${this.esc(card.id)}" title="${this.attr(`${this.typeLabel(card.type)} · ${spec.w}×${spec.h}`)}" style="--title-size:${titleSize}cqw;--subtitle-size:${subtitleSize}cqw;--icon-size:${iconSize}cqw;--icon-min:${(20*contentScale).toFixed(1)}px">
+        <div class="pv">${this.cardPreviewHtml(card)}</div>
+        <div class="card-tools"><button class="icon-btn" data-dup="${this.esc(card.id)}" title="Duplicate card">⧉</button><button class="icon-btn delete" data-del="${this.esc(card.id)}" title="Delete card">×</button></div>
+      </article></div>`;
     }).join('');
     const ratio=`${profile.width}/${profile.height}`;
     const maxWidthVh=(72*profile.width/profile.height).toFixed(2);
@@ -942,13 +1147,13 @@ class StipsPanelEditor extends HTMLElement {
     const floatY=Math.max(0,Math.min(1,Number(floating.positionY??1)));
     const floatVisible=panel.showFloatingUiHandle===true;
     const floatingHtml=`<button class="sim-floating ${floatVisible?'visible':'hidden'}" draggable="true" data-floating-drag title="Drag to position the ${floatVisible?'action button':'hidden recovery hotspot'}" style="--float-size:${floatSizeCqw}cqw;left:${(floatX*100).toFixed(2)}%;top:${(floatY*100).toFixed(2)}%;transform:translate(-${(floatX*100).toFixed(2)}%,-${(floatY*100).toFixed(2)}%)"><span>${floatVisible?'◆':'◌'}</span><small>${floatVisible?'Action':'Hidden'}</small></button>`;
-    return `<div class="sim-meta"><b>${this.esc(profile.label)}</b><span>${profile.width}×${profile.height} · ${profile.orientation} · ${columns} logical columns · scale ${Number(scale.cardScale).toFixed(2)}×</span></div>
+    return `<div class="sim-meta"><b>${this.esc(profile.label)}</b><span>${profile.width}×${profile.height} · ${profile.orientation} · ${columns} logical columns · scale ${Number(scale.cardScale).toFixed(2)}× · ${packed?'cards packed into gaps':'fixed rows'}</span></div>
       <div class="device-wrap"><div class="device" style="aspect-ratio:${ratio};width:min(100%,900px,${maxWidthVh}vh)">
         <div class="device-screen ${compact?'compact':'wide'}" style="--rail:${railPercent}%;--top-h:${topCqw}cqw;--bottom-h:${bottomCqw}cqw;--pad-x:${padX}cqw;--pad-y:${padY}cqw;--gap:${gap}cqw">
           ${showNav&&!compact?`<nav class="sim-rail">${navHtml}</nav>`:''}
           <div class="sim-main">
             ${showTop?`<div class="sim-topbar"><div><b>${this.esc(this.dashboard?.title||'Dashboard')}</b><small>${this.esc(this.page?.title||'Page')}</small></div><div class="sim-top-actions">${top.connectivity!=='Hidden'?'●':''}${top.navigation!=='Hidden'?'‹ ›':''}${top.settings!=='Hidden'?'⚙':''}</div></div>`:''}
-            <div class="sim-content"><section class="sim-grid" style="grid-template-columns:repeat(${columns*20},minmax(0,1fr))">${cardHtml||'<div class="empty big">No cards on this page. Use Add card.</div>'}</section></div>
+            <div class="sim-content">${pack?`<section class="sim-grid packed" style="height:calc(${toCqw(pack.height)}cqw + var(--pad-y)*2)"><div class="sim-pack" style="height:${toCqw(pack.height)}cqw">${cardHtml}</div>${cardHtml?'':'<div class="empty big">No cards on this page. Use Add card.</div>'}</section>`:`<section class="sim-grid" style="grid-template-columns:repeat(${columns*20},minmax(0,1fr))">${cardHtml||'<div class="empty big">No cards on this page. Use Add card.</div>'}</section>`}</div>
             ${showNav&&compact?`<nav class="sim-bottom">${navHtml}</nav>`:''}
           </div>
           ${floatingHtml}
@@ -1146,7 +1351,7 @@ class StipsPanelEditor extends HTMLElement {
               <label>Dashboard<select data-dashboard>${dashOpts}</select></label><label>Page<select data-page>${pageOpts}</select></label>
               <label>Screen layout<select data-preview-profile><option value="actual" ${this.previewProfile==='actual'?'selected':''}>Selected screen / Auto</option>${this.screenProfiles().map(x=>`<option value="${this.esc(x.key)}" ${x.key===this.previewProfile?'selected':''}>${this.esc(x.label)}</option>`).join('')}</select></label>
               <label>Layout orientation<select data-preview-orientation><option value="screen" ${this.previewOrientation==='screen'?'selected':''}>Screen setting</option><option value="Landscape" ${this.previewOrientation==='Landscape'?'selected':''}>Horizontal</option><option value="Portrait" ${this.previewOrientation==='Portrait'?'selected':''}>Vertical</option></select></label>
-              <span class="grow"></span><button data-add>＋ Add card</button><button data-save-template>Save shared</button>
+              <span class="grow"></span><button data-import ${!this.draft?'disabled':''}>⇣ Import dashboards</button><button data-add>＋ Add card</button><button data-save-template>Save shared</button>
             </div>
             ${this.draft?`<div class="preview-head"><div><b>${this.esc(d?.title||'Dashboard')}</b><span>${this.esc(p?.title||'Page')}</span></div><span>${this.esc(profile.label)} · drag cards to reorder</span></div>${this.simulatorHtml(this.cards,screen,panel,top,navItems)}`:'<div class="empty big">Waiting for a screen snapshot.</div>'}
           </main>
@@ -1154,14 +1359,19 @@ class StipsPanelEditor extends HTMLElement {
           <aside class="right panel">
             <div class="tabs"><button class="active">Card</button><span>${c?'Selected':'Nothing selected'}</span></div>
             ${c?`<section class="card-inspector">
-              <div class="selected-preview"><span class="card-icon">${this.iconFor(c.type)}</span><div><b>${this.esc(c.title||c.type)}</b><small>${this.esc(c.type)} · ${c.layout?.width||1}×${c.layout?.height||1}</small></div></div>
+              <div class="selected-preview"><span class="card-icon">${this.iconFor(c.type)}</span><div><b>${this.esc(c.title||this.typeLabel(c.type))}</b><small>${this.esc(this.typeLabel(c.type))} · ${c.layout?.width||1}×${c.layout?.height||1}</small></div></div>
+              <div class="inspector-actions"><button data-dup="${this.esc(c.id)}">⧉ Duplicate</button><button data-shift="${this.esc(c.id)}|-1" title="Move earlier">↑</button><button data-shift="${this.esc(c.id)}|1" title="Move later">↓</button><button class="danger" data-del="${this.esc(c.id)}">Delete</button></div>
+              <div class="inspector-section">Content</div>
               <div class="inspector">
                 <label>Card title<input data-field="title" value="${this.attr(c.title||'')}"></label>
-                <label>Card type<select data-field="type">${this.cardTypes().map(t=>`<option ${t===c.type?'selected':''}>${t}</option>`).join('')}</select></label>
+                <label>Card type<select data-field="type">${this.cardTypes().map(t=>`<option value="${t}" ${t===c.type?'selected':''}>${this.esc(this.typeLabel(t))}</option>`).join('')}</select></label>
                 <div><label class="field-label">Home Assistant entities</label><div class="entity-chips">${entityChips||'<span class="hint">No entity selected.</span>'}</div><div class="entity-actions"><button data-edit-entities>Choose from Home Assistant</button>${(c.entityIds||[]).length?'<button data-clear-entities>Clear</button>':''}</div></div>
+                <div class="inspector-section">Size</div>
+                <div class="size-presets">${[['S',.75,.75],['M',1,1],['Wide',2,1],['Tall',1,2],['L',2,2]].map(([l,w,h])=>`<button class="${Number(c.layout?.width||1)===w&&Number(c.layout?.height||1)===h?'active':''}" data-size="${w}x${h}">${l}</button>`).join('')}</div>
                 <div class="two"><label>Width<input type="number" min=".1" max="2" step=".1" data-field="width" value="${c.layout?.width||1}"></label><label>Height<input type="number" min=".1" max="2" step=".1" data-field="height" value="${c.layout?.height||1}"></label></div>
                  <label>Content zoom <b>${Number(c.style?.contentScale||1).toFixed(2)}×</b><input type="range" min=".75" max="1.75" step=".05" data-style-number="contentScale" value="${c.style?.contentScale||1}"></label>
                  <p class="hint">1.00× keeps the original card text/icons. Try 1.15–1.35× on larger 7–10 inch panels. The preview uses the selected physical panel profile.</p>
+                 <div class="inspector-section">Display & behavior</div>
                  <details><summary>Presentation</summary><div class="panel-settings">
                    <div class="subgrid">${[['showEntityName','Name'],['showRoomName','Room'],['showState','State'],['showIcon','Icon'],['compact','Compact'],['showInlineControls','Inline controls']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-style-bool="${f}" ${checked(c.style?.[f] ?? !['showRoomName','compact'].includes(f))}> ${l}</label>`).join('')}</div>
                    <label>Alignment<select data-style-select="alignment">${['start','center','end'].map(x=>`<option value="${x}" ${x===(c.style?.alignment||'start')?'selected':''}>${x}</option>`).join('')}</select></label>
@@ -1202,7 +1412,6 @@ class StipsPanelEditor extends HTMLElement {
                  ${c.type==='Connectivity'?`<details open><summary>Connectivity</summary><div class="panel-settings"><div class="subgrid">${[['showWifi','Wi-Fi'],['showHomeAssistant','Home Assistant'],['showInternet','Internet']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-card-setting-bool="${f}" ${checked(cardSettings[f])}> ${l}</label>`).join('')}</div>${[['wifiMode','Wi-Fi mode'],['homeAssistantMode','HA mode'],['internetMode','Internet mode']].map(([f,l])=>`<label>${l}<select data-card-setting-select="${f}">${['Hidden','IconOnly','TextOnly','IconAndText'].map(x=>`<option ${x===(cardSettings[f]||'IconAndText')?'selected':''}>${x}</option>`).join('')}</select></label>`).join('')}</div></details>`:''}
                  ${['SecuritySummary','Presence'].includes(c.type)?`<details><summary>Security rules</summary><div class="panel-settings"><label>Secure states <small>one per line: entity_id | state1, state2</small><textarea class="compact-textarea" data-security-rules>${this.esc((c.securityRules||[]).map(rule=>`${rule.entityId}|${(rule.secureStates||[]).join(',')}`).join('\n'))}</textarea></label></div></details>`:''}
                  ${c.type==='AlertControl'?`<label class="toggleline"><input type="checkbox" data-card-setting-bool="requireInstallerPin" ${checked(cardSettings.requireInstallerPin)}> Require installer PIN</label>`:''}
-                 <button class="danger wide" data-del="${this.esc(c.id)}">Delete card</button>
               </div>
             </section>`:`<div class="empty select-card">Select a card in the screen preview to edit it here.</div>`}
 
@@ -1256,7 +1465,7 @@ class StipsPanelEditor extends HTMLElement {
             </div></details>`:''}
             ${this.draft?`<details><summary>Dashboard appearance</summary><div class="panel-settings">
               <div class="two"><label>Dashboard title<input data-dashboard-text="title" value="${this.attr(d?.title||'')}"></label><label>Dashboard icon<input data-dashboard-text="icon" value="${this.attr(d?.icon||'home')}"></label></div>
-              <div class="subgrid"><label class="toggleline"><input type="checkbox" data-dashboard-bool="showHeader" ${checked(d?.showHeader!==false)}> Header</label><label class="toggleline"><input type="checkbox" data-dashboard-bool="lockScrolling" ${checked(d?.lockScrolling===true)}> Lock scrolling</label><label class="toggleline"><input type="checkbox" data-dashboard-bool="autoCompact" ${checked(d?.autoCompact!==false)}> Auto compact</label></div>
+              <div class="subgrid"><label class="toggleline"><input type="checkbox" data-dashboard-bool="showHeader" ${checked(d?.showHeader!==false)}> Header</label><label class="toggleline"><input type="checkbox" data-dashboard-bool="lockScrolling" ${checked(d?.lockScrolling===true)}> Lock scrolling</label><label class="toggleline"><input type="checkbox" data-dashboard-bool="autoCompact" ${checked(d?.autoCompact!==false)}> Pack cards into gaps</label></div>
               <label>Theme mode<select data-dashboard-select="themeMode"><option value="FollowAppTheme" ${d?.themeMode!=='CustomDashboardTheme'?'selected':''}>Follow app</option><option value="CustomDashboardTheme" ${d?.themeMode==='CustomDashboardTheme'?'selected':''}>Custom dashboard theme</option></select></label>
               <label>Dashboard theme<input data-dashboard-text="themeId" value="${this.attr(d?.themeId||'stips-v5-dark')}"></label>
               <label>Background<select data-appearance-select="backgroundType">${['theme','gradient','image'].map(x=>`<option value="${x}" ${x===(appearance.backgroundType||'theme')?'selected':''}>${x}</option>`).join('')}</select></label>
@@ -1284,7 +1493,7 @@ class StipsPanelEditor extends HTMLElement {
             <details><summary>Advanced JSON editor</summary><textarea id="json">${jsonText}</textarea><button class="wide" data-apply-json>Apply JSON draft</button></details>
           </aside>
         </div>
-      </div>${this.pickerHtml()}`;
+      </div>${this.pickerHtml()}${this.importerHtml()}`;
     this.bind();
     this.restoreUiState();
   }
@@ -1323,7 +1532,7 @@ class StipsPanelEditor extends HTMLElement {
     q('[data-preview-profile]')?.addEventListener('change',e=>{this.previewProfile=e.target.value;const p=this.ensurePanelConfig();if(p){p.hardwareProfile=this.previewProfile==='actual'?'Auto':this.previewProfile;this.draftSource='draft';}this.render();});
     q('[data-preview-orientation]')?.addEventListener('change',e=>{this.previewOrientation=e.target.value;const p=this.ensurePanelConfig();if(p){if(this.previewOrientation==='screen')p.autoRotate=true;else{p.autoRotate=false;p.orientation=this.previewOrientation;}this.draftSource='draft';}this.render();});
     qa('[data-card]').forEach(x=>{
-      x.onclick=(e)=>{if(e.target.closest('[data-del]'))return;this.selectedCardId=x.dataset.card;this.render();};
+      x.onclick=(e)=>{if(e.target.closest('[data-del],[data-dup]'))return;this.selectedCardId=x.dataset.card;this.render();};
       x.ondragstart=()=>{this.dragCardId=x.dataset.card;};
       x.ondragover=e=>e.preventDefault();
       x.ondrop=e=>{if(this.dragFloating)return;e.preventDefault();e.stopPropagation();this.moveCard(this.dragCardId,x.dataset.card);};
@@ -1351,6 +1560,14 @@ class StipsPanelEditor extends HTMLElement {
     }
         qa('[data-del]').forEach(x=>x.onclick=(e)=>{e.stopPropagation();this.removeCard(x.dataset.del);});
     q('[data-add]')?.addEventListener('click',()=>this.openAddPicker());
+    q('[data-import]')?.addEventListener('click',()=>this.openImport());
+    qa('[data-import-close]').forEach(x=>x.addEventListener('click',()=>{this.importer=null;this.render();}));
+    q('[data-import-backdrop]')?.addEventListener('click',e=>{if(e.target===e.currentTarget){this.importer=null;this.render();}});
+    qa('[data-import-key]').forEach(x=>x.addEventListener('change',e=>{this.importer.selected[e.target.dataset.importKey]=e.target.checked;this.render();}));
+    q('[data-import-apply]')?.addEventListener('click',()=>this.applyImport());
+    qa('[data-dup]').forEach(x=>x.onclick=(e)=>{e.stopPropagation();this.duplicateCard(x.dataset.dup);});
+    qa('[data-shift]').forEach(x=>x.onclick=()=>{const [id,d]=x.dataset.shift.split('|');this.shiftCard(id,Number(d));});
+    qa('[data-size]').forEach(x=>x.onclick=()=>{const [w,h]=x.dataset.size.split('x').map(Number);this.setCardSize(w,h);});
     q('[data-edit-entities]')?.addEventListener('click',()=>this.openEntityPicker());
     q('[data-clear-entities]')?.addEventListener('click',()=>{const c=this.selectedCard;if(c){c.entityIds=[];this.draftSource='draft';this.render();}});
     qa('[data-field]').forEach(x=>x.addEventListener('change',e=>this.updateCard(e.target.dataset.field,e.target.value)));
@@ -1446,7 +1663,56 @@ class StipsPanelEditor extends HTMLElement {
     .fleet{padding:14px;margin-bottom:14px}.fleet-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}.fleet-head>div:first-child{display:grid;gap:3px}.fleet-groups{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}.group-chip{font-size:10px;padding:5px 7px;border:1px solid var(--divider-color,#303643);border-radius:999px}.fleet-stats{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:10px}.fleet-stats div{padding:9px;border-radius:10px;background:var(--secondary-background-color,#10141c)}.fleet-stats span,.fleet-stats b{display:block}.fleet-stats span{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.fleet-stats b{font-size:16px;margin-top:2px}.fleet-controls{display:grid;grid-template-columns:minmax(260px,420px) 1fr;gap:10px;align-items:end}.fleet-controls label{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.fleet-controls select{width:100%;margin-top:4px}.fleet-controls small{display:block;margin-top:4px}.fleet-buttons{display:flex;gap:6px;flex-wrap:wrap}.ota-grid{display:grid;grid-template-columns:2fr 1fr 1fr 2fr;gap:8px;align-items:end}.ota-grid label{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.ota-grid input{width:100%;margin-top:4px}.ota-actions{display:flex;gap:6px;flex-wrap:wrap}.update-meta,.progress-note{margin-top:8px;padding:8px;border-radius:9px;background:var(--secondary-background-color,#10141c);display:grid;gap:2px}.update-meta span{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.diagnostics-grid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 9px;padding:8px;background:var(--secondary-background-color,#10141c);border-radius:10px;margin-bottom:8px;font-size:10px}.diagnostics-grid span{color:var(--secondary-text-color,#98a2b3)}.diagnostics-grid b{overflow-wrap:anywhere}.advanced-policy{padding:8px;border:1px solid #d65b64;border-radius:9px;display:grid;gap:6px}.panel-settings input[type=number]{width:100%;margin-top:4px}
         .layout{display:grid;grid-template-columns:235px minmax(540px,1fr) 360px;gap:14px;align-items:start}.panel{background:var(--card-background-color,#151922);border:1px solid var(--divider-color,#2a303b);border-radius:18px;min-width:0}.left,.right{padding:14px;max-height:calc(100vh - 130px);overflow:auto;position:sticky;top:10px}.workspace{overflow:hidden;min-height:650px}h3{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--secondary-text-color,#98a2b3);margin:8px 0 10px}.screens,.templates,.revisions{display:grid;gap:6px;margin-bottom:16px}.screen{display:grid;grid-template-columns:10px 1fr auto;text-align:left;gap:9px;align-items:center;padding:10px}.screen.active{border-color:var(--primary-color,#7c5cff);background:color-mix(in srgb,var(--primary-color,#6750a4) 12%,var(--card-background-color,#171b24))}.screen span:nth-child(2){min-width:0}.screen b,.screen small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.screen small,.template small{color:var(--secondary-text-color,#98a2b3);font-size:10px}.screen em{font-style:normal;font-size:11px}.dot{width:8px;height:8px;border-radius:50%;background:#666}.dot.on{background:#4fd49b;box-shadow:0 0 9px #4fd49b77}.dot.off{background:#e45c64;box-shadow:0 0 7px #e45c6444}.status{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}.status div{padding:9px;border-radius:10px;background:var(--secondary-background-color,#10141c)}.status span,.status b{display:block}.status span{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.status b{font-size:11px;margin-top:3px;overflow:hidden;text-overflow:ellipsis}.presence.online{color:#4fd49b}.presence.offline{color:#e45c64}.applied{display:grid;gap:3px;padding:9px;border:1px solid var(--divider-color,#303643);border-radius:10px;margin-bottom:18px}.applied b{font-size:11px}.applied span{font-size:10px;color:var(--secondary-text-color,#98a2b3);line-height:1.4}.template{display:grid;grid-template-columns:auto 1fr;text-align:left;gap:1px 8px}.template span{grid-row:1/3}.commands{display:grid;grid-template-columns:1fr;gap:6px}.commands .danger{border-color:#d65b64;color:#ff9ca2}.last-command{margin-top:5px;padding-top:5px;border-top:1px solid var(--divider-color,#303643)}
     .toolbar{padding:11px;display:flex;gap:8px;align-items:end;border-bottom:1px solid var(--divider-color,#2a303b);flex-wrap:wrap}.toolbar label{font-size:10px;color:var(--secondary-text-color,#98a2b3)}select,input{display:block;background:var(--secondary-background-color,#0e1219);border:1px solid var(--divider-color,#303643);color:inherit;border-radius:9px;padding:8px;max-width:100%}.toolbar select{min-width:120px}.grow{flex:1}.preview-head{display:flex;justify-content:space-between;padding:14px 16px 7px;color:var(--secondary-text-color,#98a2b3);font-size:11px}.preview-head div>*{display:block}.preview-head b{font-size:17px;color:var(--primary-text-color,#fff)}
-    .sim-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:0 16px 8px;font-size:10px;color:var(--secondary-text-color,#98a2b3)}.sim-meta b{color:var(--primary-text-color,#fff)}.device-wrap{padding:4px 16px 22px;display:flex;justify-content:center}.device{width:min(100%,900px);max-height:72vh;background:#05070a;border:8px solid #222832;border-radius:20px;box-shadow:0 16px 42px #0006;overflow:hidden}.device-screen{height:100%;width:100%;display:flex;background:var(--primary-background-color,#0e1117);overflow:hidden;position:relative}.sim-rail{width:var(--rail);min-width:42px;background:var(--card-background-color,#171b24);border-right:1px solid var(--divider-color,#303643);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:5px 2px}.sim-rail span,.sim-bottom span{display:grid;place-items:center;gap:1px;min-width:0;color:var(--secondary-text-color,#98a2b3);font-size:12px}.sim-rail small,.sim-bottom small{font-size:5.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sim-main{flex:1;min-width:0;display:flex;flex-direction:column;container-type:inline-size;overflow:hidden}.sim-topbar{height:var(--top-h);min-height:24px;background:var(--card-background-color,#171b24);border-bottom:1px solid var(--divider-color,#303643);display:flex;align-items:center;justify-content:space-between;padding:0 2.3cqw;gap:2cqw}.sim-topbar div:first-child{min-width:0}.sim-topbar b,.sim-topbar small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sim-topbar b{font-size:1.8cqw}.sim-topbar small{font-size:1.05cqw;color:var(--secondary-text-color,#98a2b3)}.sim-top-actions{font-size:1.8cqw;display:flex;gap:1.8cqw}.sim-content{flex:1;min-height:0;overflow:auto;background:var(--primary-background-color,#0e1117)}.sim-grid{display:grid;gap:var(--gap);padding:var(--pad-y) var(--pad-x) calc(var(--pad-y) + 2cqw);align-items:start}.sim-card{min-height:8px;margin:0}.sim-card .card-copy b{font-size:clamp(7px,var(--title-size,1.5cqw),24px)}.sim-card .card-copy small{font-size:clamp(5px,var(--subtitle-size,.9cqw),16px)}.sim-card .card-icon{font-size:clamp(10px,var(--icon-size,2cqw),32px);min-width:var(--icon-min,20px)}.sim-card .delete{font-size:clamp(10px,var(--title-size,1.5cqw),24px);padding:0 3px}.sim-bottom{height:var(--bottom-h);min-height:36px;background:var(--card-background-color,#171b24);border-top:1px solid var(--divider-color,#303643);display:flex;align-items:center;justify-content:space-around;padding:2px 1cqw}.sim-floating{position:absolute;z-index:20;width:var(--float-size);height:var(--float-size);min-width:18px;min-height:18px;border-radius:999px;padding:0;display:grid;place-items:center;align-content:center;gap:0;cursor:grab;box-shadow:0 3px 12px #0007}.sim-floating span{font-size:clamp(8px,1.8cqw,18px);line-height:1}.sim-floating small{font-size:clamp(4px,.7cqw,8px);line-height:1;margin-top:1px}.sim-floating.visible{background:var(--primary-color,#6750a4);border-color:#ffffff66;color:#fff}.sim-floating.hidden{background:transparent;border:2px dashed color-mix(in srgb,var(--primary-color,#6750a4) 70%,#fff);color:var(--primary-color,#9d87ff);box-shadow:none}
+    .sim-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:0 16px 8px;font-size:10px;color:var(--secondary-text-color,#98a2b3)}.sim-meta b{color:var(--primary-text-color,#fff)}.device-wrap{padding:4px 16px 22px;display:flex;justify-content:center}.device{width:min(100%,900px);max-height:72vh;background:#05070a;border:8px solid #222832;border-radius:20px;box-shadow:0 16px 42px #0006;overflow:hidden}.device-screen{height:100%;width:100%;display:flex;background:var(--primary-background-color,#0e1117);overflow:hidden;position:relative}.sim-rail{width:var(--rail);min-width:42px;background:var(--card-background-color,#171b24);border-right:1px solid var(--divider-color,#303643);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:5px 2px}.sim-rail span,.sim-bottom span{display:grid;place-items:center;gap:1px;min-width:0;color:var(--secondary-text-color,#98a2b3);font-size:12px}.sim-rail small,.sim-bottom small{font-size:5.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sim-main{flex:1;min-width:0;display:flex;flex-direction:column;container-type:inline-size;overflow:hidden}.sim-topbar{height:var(--top-h);min-height:24px;background:var(--card-background-color,#171b24);border-bottom:1px solid var(--divider-color,#303643);display:flex;align-items:center;justify-content:space-between;padding:0 2.3cqw;gap:2cqw}.sim-topbar div:first-child{min-width:0}.sim-topbar b,.sim-topbar small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sim-topbar b{font-size:1.8cqw}.sim-topbar small{font-size:1.05cqw;color:var(--secondary-text-color,#98a2b3)}.sim-top-actions{font-size:1.8cqw;display:flex;gap:1.8cqw}.sim-content{flex:1;min-height:0;overflow:auto;background:var(--primary-background-color,#0e1117)}.sim-grid{display:grid;column-gap:0;row-gap:var(--gap);padding:var(--pad-y) var(--pad-x) calc(var(--pad-y) + 2cqw);align-items:start}
+.sim-grid.packed{display:block;box-sizing:content-box}
+.sim-pack{position:relative;width:100%}
+.sim-slot{box-sizing:border-box;min-width:0}
+.sim-slot>.sim-card{height:100%;box-sizing:border-box}
+.dash-card.live{position:relative;display:block;padding:clamp(4px,1cqw,11px)}
+.dash-card.live.flat{background:transparent;border-color:transparent}
+.pv{height:100%;display:flex;flex-direction:column;gap:clamp(2px,.5cqw,6px);min-width:0;overflow:hidden}
+.pv-head{display:flex;align-items:center;gap:clamp(3px,.7cqw,8px);min-width:0;padding-right:clamp(16px,3cqw,38px)}
+.pv-icon{font-size:clamp(10px,var(--icon-size,2cqw),30px);min-width:var(--icon-min,20px);opacity:.8}
+.pv-icon.on{color:#ffc857;opacity:1}
+.pv-copy{min-width:0;flex:1}
+.pv-copy b,.pv-title{display:block;font-size:clamp(7px,var(--title-size,1.5cqw),22px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-copy small,.pv-sub{display:block;font-size:clamp(5px,var(--subtitle-size,.9cqw),15px);color:var(--secondary-text-color,#98a2b3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-big{font-size:clamp(10px,calc(var(--title-size,1.5cqw)*1.9),40px);font-weight:700;line-height:1.1}
+.pv-mid{font-size:clamp(8px,calc(var(--title-size,1.5cqw)*1.2),26px);font-weight:600}
+.pv-text{font-size:clamp(6px,var(--subtitle-size,.9cqw),16px);white-space:pre-wrap;overflow:hidden}
+.pv-header{font-size:clamp(8px,calc(var(--title-size,1.5cqw)*1.2),26px);font-weight:700;height:100%;display:flex;align-items:center}
+.pv-divider{border:0;border-top:1px solid var(--divider-color,#303643);width:100%;margin:auto 0}
+.pv-spacer{height:100%;border:1px dashed var(--divider-color,#303643);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--secondary-text-color,#98a2b3)}
+.pv-bar{height:clamp(3px,.6cqw,8px);border-radius:9px;background:rgba(127,127,127,.25);overflow:hidden}
+.pv-bar i{display:block;height:100%;background:var(--primary-color,#7c5cff)}
+.pv-toggle{position:absolute;right:clamp(4px,1cqw,11px);top:clamp(4px,1cqw,11px);width:clamp(14px,2.6cqw,34px);height:clamp(8px,1.5cqw,19px);border-radius:20px;background:rgba(127,127,127,.35)}
+.pv-toggle::after{content:"";position:absolute;top:12%;left:8%;width:38%;height:76%;border-radius:50%;background:#fff}
+.pv-toggle.on{background:var(--primary-color,#7c5cff)}
+.pv-toggle.on::after{left:54%}
+.pv-chips{display:flex;flex-wrap:wrap;gap:3px}
+.pv-chips span,.pv-room span{font-size:clamp(5px,var(--subtitle-size,.9cqw),13px);border:1px solid var(--divider-color,#303643);border-radius:20px;padding:1px 6px}
+.pv-chips span.on,.pv-room span.on{background:var(--primary-color,#7c5cff);color:#fff;border-color:transparent}
+.pv-room{display:flex;flex-wrap:wrap;gap:3px}
+.pv-row{display:flex;justify-content:space-between;gap:6px;font-size:clamp(5px,var(--subtitle-size,.9cqw),14px)}
+.pv-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-swatch{height:clamp(4px,.8cqw,10px);border-radius:6px}
+.pv-gauge{flex:1;min-height:0;aspect-ratio:1;max-height:100%;margin:auto;border-radius:50%;background:conic-gradient(var(--primary-color,#7c5cff) calc(var(--p)*1%),rgba(127,127,127,.25) 0);display:grid;place-items:center;mask:radial-gradient(circle,transparent 55%,#000 56%)}
+.pv-gauge span{font-weight:700;font-size:clamp(6px,var(--subtitle-size,.9cqw),14px)}
+.pv-graph{width:100%;flex:1;min-height:10px}
+.pv-graph polyline{fill:none;stroke:var(--primary-color,#7c5cff);stroke-width:2}
+.pv-camera{height:100%;border-radius:6px;background:#05070b;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#8b93a3}
+.card-tools{position:absolute;right:2px;top:2px;display:none;gap:2px;z-index:2}
+.dash-card:hover .card-tools,.dash-card.selected .card-tools{display:flex}
+.card-tools .icon-btn{background:rgba(0,0,0,.55);color:#fff;border-radius:6px;font-size:12px;padding:1px 5px}
+.inspector-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.inspector-actions button{flex:1}
+.inspector-section{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--secondary-text-color,#98a2b3);margin-top:10px;font-weight:700}
+.size-presets{display:flex;gap:6px;flex-wrap:wrap}
+.import-source{padding:10px 4px;border-bottom:1px solid var(--divider-color,#303643)}
+.import-source>b{display:block}
+.import-source>small,.import-row small{color:var(--secondary-text-color,#98a2b3)}
+.import-row{display:flex;gap:8px;align-items:center;padding:4px 0}
+.size-presets button.active{background:var(--primary-color,#7c5cff);color:#fff}.sim-card{min-height:8px;margin:0}.sim-card .card-copy b{font-size:clamp(7px,var(--title-size,1.5cqw),24px)}.sim-card .card-copy small{font-size:clamp(5px,var(--subtitle-size,.9cqw),16px)}.sim-card .card-icon{font-size:clamp(10px,var(--icon-size,2cqw),32px);min-width:var(--icon-min,20px)}.sim-card .delete{font-size:clamp(10px,var(--title-size,1.5cqw),24px);padding:0 3px}.sim-bottom{height:var(--bottom-h);min-height:36px;background:var(--card-background-color,#171b24);border-top:1px solid var(--divider-color,#303643);display:flex;align-items:center;justify-content:space-around;padding:2px 1cqw}.sim-floating{position:absolute;z-index:20;width:var(--float-size);height:var(--float-size);min-width:18px;min-height:18px;border-radius:999px;padding:0;display:grid;place-items:center;align-content:center;gap:0;cursor:grab;box-shadow:0 3px 12px #0007}.sim-floating span{font-size:clamp(8px,1.8cqw,18px);line-height:1}.sim-floating small{font-size:clamp(4px,.7cqw,8px);line-height:1;margin-top:1px}.sim-floating.visible{background:var(--primary-color,#6750a4);border-color:#ffffff66;color:#fff}.sim-floating.hidden{background:transparent;border:2px dashed color-mix(in srgb,var(--primary-color,#6750a4) 70%,#fff);color:var(--primary-color,#9d87ff);box-shadow:none}
     .dash-card{border:1px solid var(--divider-color,#303643);border-radius:clamp(5px,1.4cqw,14px);background:var(--secondary-background-color,#10141c);padding:clamp(4px,1cqw,11px);display:flex;align-items:center;gap:clamp(3px,.8cqw,9px);overflow:hidden;cursor:grab}.dash-card.selected{outline:2px solid var(--primary-color,#7c5cff);outline-offset:-2px}.card-icon{font-size:20px;min-width:20px}.card-copy{min-width:0;flex:1}.card-copy b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.15}.card-copy small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--secondary-text-color,#98a2b3);margin-top:2px}
     .tabs{border-bottom:1px solid var(--divider-color,#303643);margin:-14px -14px 12px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center}.tabs button{border:0;background:transparent}.tabs span{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.card-inspector{margin-bottom:14px}.selected-preview{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;background:color-mix(in srgb,var(--primary-color,#6750a4) 10%,var(--secondary-background-color,#10141c));margin-bottom:11px}.selected-preview div{min-width:0}.selected-preview b,.selected-preview small{display:block;overflow:hidden;text-overflow:ellipsis}.selected-preview small{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.inspector,.panel-settings{display:grid;gap:10px}.inspector label,.panel-settings label,.field-label{font-size:11px;color:var(--secondary-text-color,#98a2b3)}.inspector input,.inspector select,.panel-settings select{width:100%;margin-top:4px}.inspector input[type=range]{display:block;width:100%;padding:0}.panel-settings .toggleline{display:flex;align-items:center;gap:8px;color:var(--primary-text-color,#fff)}.panel-settings .toggleline input{display:inline-block;width:auto;margin:0;padding:0}.panel-settings input[type=range]{display:block;width:100%;padding:0;margin-top:5px}.floating-settings{display:grid;gap:3px;margin-top:4px;padding:9px;border-radius:10px;background:color-mix(in srgb,var(--primary-color,#6750a4) 10%,var(--secondary-background-color,#10141c));border:1px solid color-mix(in srgb,var(--primary-color,#6750a4) 30%,var(--divider-color,#303643))}.floating-settings b{font-size:11px}.floating-settings span{font-size:10px;line-height:1.35;color:var(--secondary-text-color,#98a2b3)}.position-presets{display:grid;grid-template-columns:1fr 1fr;gap:6px}.position-presets button{padding:7px 8px;font-size:10px}.entity-chips{display:grid;gap:5px;margin:5px 0}.entity-chip{display:grid;padding:7px 8px;border:1px solid var(--divider-color,#303643);border-radius:9px;font-size:11px}.entity-chip small{font-size:9px;color:var(--secondary-text-color,#98a2b3);overflow:hidden;text-overflow:ellipsis}.entity-actions{display:flex;gap:6px;flex-wrap:wrap}.subgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}.hint,.empty{font-size:11px;line-height:1.45;color:var(--secondary-text-color,#98a2b3)}.empty.big{padding:50px 20px;text-align:center;grid-column:1/-1}.select-card{padding:35px 14px;text-align:center}.sync-note{display:grid;gap:3px;padding:9px;border-radius:10px;background:var(--secondary-background-color,#10141c)}.sync-note b{font-size:11px}.sync-note span{font-size:10px;color:var(--secondary-text-color,#98a2b3);line-height:1.4}details{margin-top:13px;border-top:1px solid var(--divider-color,#303643);padding-top:10px}summary{cursor:pointer;font-weight:700;font-size:12px;margin-bottom:8px}.revision{display:grid;grid-template-columns:auto 1fr;text-align:left;gap:2px 8px}.revision b{grid-row:1/3}.revision span,.revision small{font-size:10px}.revision small{color:var(--secondary-text-color,#98a2b3)}textarea{width:100%;height:330px;background:#090c11;color:#d9e1ec;border:1px solid var(--divider-color,#303643);border-radius:10px;padding:9px;font-family:ui-monospace,monospace;font-size:10px;resize:vertical;margin-bottom:8px}.compact-textarea{height:90px;margin:4px 0 0}.compact-textarea.rules{height:150px}
     .modal-backdrop{position:fixed;inset:0;z-index:1000;background:#0009;display:grid;place-items:center;padding:18px}.picker-modal{width:min(1050px,96vw);height:min(760px,92vh);background:var(--card-background-color,#151922);border:1px solid var(--divider-color,#303643);border-radius:20px;box-shadow:0 24px 70px #0009;display:flex;flex-direction:column;overflow:hidden}.picker-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px}.picker-tabs{display:flex;gap:6px;padding:0 16px 10px;border-bottom:1px solid var(--divider-color,#303643)}.picker-tabs button.active{background:color-mix(in srgb,var(--primary-color,#6750a4) 18%,var(--card-background-color,#171b24));border-color:var(--primary-color,#6750a4)}.picker-filters{display:flex;gap:8px;align-items:end;flex-wrap:wrap;padding:10px 16px}.picker-filters label{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.picker-filters .search{min-width:260px}.picker-filters input,.picker-filters select{width:100%;margin-top:4px}.picker-count{padding:0 16px 8px;font-size:10px;color:var(--secondary-text-color,#98a2b3)}.entity-list{flex:1;min-height:0;overflow:auto;padding:0 12px 10px;display:grid;align-content:start;gap:5px}.entity-row{display:grid;grid-template-columns:9px minmax(0,1fr) auto auto;gap:9px;align-items:center;text-align:left;padding:9px 10px}.entity-row.selected{border-color:var(--primary-color,#6750a4);background:color-mix(in srgb,var(--primary-color,#6750a4) 14%,var(--card-background-color,#171b24))}.entity-dot{width:7px;height:7px;border-radius:50%;background:#4fd49b}.entity-dot.off{background:#68707d}.entity-main{min-width:0}.entity-main b,.entity-main small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.entity-main small{font-size:9px;color:var(--secondary-text-color,#98a2b3)}.entity-state{font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis}.suggested{font-size:9px;padding:4px 6px;border-radius:8px;background:var(--secondary-background-color,#10141c);color:var(--secondary-text-color,#98a2b3)}.builtin-grid{flex:1;overflow:auto;padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;align-content:start}.builtin-card{min-height:90px;display:grid;place-items:center;gap:4px}.builtin-card span{font-size:26px}.builtin-card.selected{border-color:var(--primary-color,#6750a4);background:color-mix(in srgb,var(--primary-color,#6750a4) 14%,var(--card-background-color,#171b24))}.picker-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--divider-color,#303643);background:var(--card-background-color,#151922)}.picker-actions>span{font-size:10px;color:var(--secondary-text-color,#98a2b3)}.picker-actions>div{display:flex;gap:7px}

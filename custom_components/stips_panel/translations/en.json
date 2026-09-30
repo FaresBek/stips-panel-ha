@@ -18,6 +18,8 @@
     "report_update": {"name": "Report OTA update", "description": "Internal APK update progress callback from STIPS."},
     "report_diagnostics": {"name": "Upload diagnostics", "description": "Internal STIPS diagnostic ZIP upload."},
     "sync_current": {"name": "Sync current dashboard", "description": "Store the current screen snapshot without creating a deployment."},
+    "list_dashboards": {"name": "Discover dashboards", "description": "List dashboards of other STIPS panels and shared dashboards stored in Home Assistant."},
+    "get_dashboards": {"name": "Get dashboards", "description": "Return full dashboards from another STIPS panel or a shared dashboard."},
     "push_dashboard": {"name": "Push dashboard", "description": "Admin-only atomic dashboard deployment to one STIPS screen."},
     "rollback": {"name": "Rollback dashboard", "description": "Admin-only deployment of a previous STIPS revision."},
     "screen_command": {"name": "Send STIPS management command", "description": "Admin-only dashboard, kiosk, Device Owner, watchdog, diagnostic, maintenance or OTA command."},
