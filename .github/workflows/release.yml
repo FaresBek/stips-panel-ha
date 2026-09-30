@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  # Publish from the Actions tab (works from a phone browser): creates the tag and the release.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, for example 1.5.8. Must match manifest.json."
+        required: true
 
 permissions:
   contents: write
@@ -16,14 +22,34 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: Resolve release tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::Run this workflow from the main branch."
+              exit 1
+            fi
+            TAG="v${INPUT_VERSION#v}"
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          MANIFEST=$(python -c 'import json; print(json.load(open("custom_components/stips_panel/manifest.json"))["version"])')
+          if [ "$TAG" != "v$MANIFEST" ]; then
+            echo "::error::$TAG does not match manifest version $MANIFEST."
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
       - name: Validate and build
         run: python tools/validate.py
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+        # --target creates the tag on this commit when it does not exist yet (manual runs).
         run: >-
-          gh release create "${GITHUB_REF_NAME}"
+          gh release create "$TAG"
           dist/stips-panel-remote-manager.zip
-          --title "STIPS Panel Remote Manager ${GITHUB_REF_NAME#v}"
+          --target "$GITHUB_SHA"
+          --title "STIPS Panel Remote Manager ${TAG#v}"
           --generate-notes
-

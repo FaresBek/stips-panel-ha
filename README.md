@@ -51,6 +51,8 @@ python tools/build_release.py
 node --check custom_components/stips_panel/frontend/stips-panel-editor.js
 ```
 
+To publish a release, either push a `vX.Y.Z` tag, or open **Actions > Release > Run workflow** on `main` (this works from a phone browser) and enter the version from `manifest.json`. Both build `stips-panel-remote-manager.zip` and create the GitHub release that HACS installs.
+
 The matching Android-model compatibility verification runs in the private STIPS Panel development repository before a distribution update is published here.
 
 ## Release 1.5.8
