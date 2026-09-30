@@ -4,7 +4,7 @@ The Home Assistant integration and visual dashboard editor for STIPS Panel Andro
 
 [![Open STIPS Panel Remote Manager in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=FaresBek&repository=stips-panel-ha&category=integration)
 
-This public repository contains only the Home Assistant distribution. The commercial Android application is maintained separately. Remote Manager **1.5.6** is compatible with STIPS Panel Android **1.6.1** and preserves existing manager storage, screen history, projects and deployed revisions.
+This public repository contains only the Home Assistant distribution. The commercial Android application is maintained separately. Remote Manager **1.5.8** is compatible with STIPS Panel Android **1.7.0** and preserves existing manager storage, screen history, projects and deployed revisions.
 
 ## Install with HACS
 
@@ -39,7 +39,7 @@ Restart Home Assistant, then add **STIPS Panel Remote Manager** from **Settings 
 
 The editor always starts from the complete project snapshot supplied by the Android panel or stored by Home Assistant. Fields that the visual editor does not understand remain in the snapshot instead of being discarded. Dashboard pushes create versioned desired revisions; the Android client validates and applies them atomically.
 
-Remote Manager 1.5.6 retains storage version 1 and is an in-place upgrade from the 1.4.x and 1.5.x releases.
+Remote Manager 1.5.8 retains storage version 1 and is an in-place upgrade from the 1.4.x and 1.5.x releases.
 
 ## Development
 
@@ -52,6 +52,17 @@ node --check custom_components/stips_panel/frontend/stips-panel-editor.js
 ```
 
 The matching Android-model compatibility verification runs in the private STIPS Panel development repository before a distribution update is published here.
+
+## Release 1.5.8
+
+- Edit STIPS Alerts activation: Local panel or a Home Assistant `input_boolean`/`switch` (read-only `binary_sensor`), with Follow HA or Two-way control mode.
+- Edit arming delay, alarm delay and per-sensor alarm delays.
+- To use a dedicated switch, create an Input Boolean helper in Home Assistant, then select it in the editor. The manager does not create helpers automatically because Home Assistant has no public API for it.
+- Older projects stay on Local panel with no delays; storage version 1 is unchanged.
+
+## Release 1.5.7
+
+- Add Room ON behavior, Room/Room Popup tap, double-tap and long-press actions, Room Popup Cards and Page Popup Cards.
 
 ## Release 1.5.6
 
