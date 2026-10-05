@@ -1,3 +1,10 @@
+# 1.5.16
+
+- Delete offline screens: **Delete offline screen** under Remote actions (shown while the selected screen is offline). Its backups and revision history are kept, and it reappears automatically when the panel comes back online.
+- Navigator style (`navigation.barStyle`: default, match cards, blur, transparent) and alert audio output (`alerts.audioOutput`: alarm or media) in the editor.
+- Demo/showroom settings removed from the editor; existing values pass through untouched.
+- Compatible with STIPS Panel Android 1.8.7; storage version 1 and complete project snapshots are unchanged.
+
 # 1.5.9
 
 - Live card preview from Home Assistant states.

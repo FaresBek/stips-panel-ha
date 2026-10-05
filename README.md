@@ -4,7 +4,7 @@ The Home Assistant integration and visual dashboard editor for STIPS Panel Andro
 
 [![Open STIPS Panel Remote Manager in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=FaresBek&repository=stips-panel-ha&category=integration)
 
-This public repository contains only the Home Assistant distribution. The commercial Android application is maintained separately. Remote Manager **1.5.9** is compatible with STIPS Panel Android **1.8.0** and preserves existing manager storage, screen history, projects and deployed revisions.
+This public repository contains only the Home Assistant distribution. The commercial Android application is maintained separately. Remote Manager **1.5.16** is compatible with STIPS Panel Android **1.8.7** and preserves existing manager storage, screen history, projects and deployed revisions.
 
 ## Install with HACS
 

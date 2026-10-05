@@ -1,6 +1,6 @@
 """STIPS Panel fleet, dashboard and managed-device remote manager.
 
-V1.5.9 adds a live card preview, gap packing and card duplication while retaining the local-first
+V1.5.16 can delete offline screens (they reappear when back online) while retaining the local-first
 dashboard deployment protocol for dedicated STIPS Android wall panels.
 """
 from __future__ import annotations
@@ -22,6 +22,7 @@ from homeassistant.components import frontend, websocket_api
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
@@ -435,6 +436,21 @@ class StipsPanelManager:
         sensor("last_ha_rx", screen.get("last_ha_rx_epoch_ms", "unknown"))
         sensor("system_update_policy", screen.get("system_update_policy", "unknown"))
         sensor("watchdog", screen.get("health_state", "unknown"), attrs={"message": screen.get("health_message", "")})
+
+    async def delete_screen(self, screen_id: str) -> None:
+        """Forget an offline screen. Its revisions, backups and pending deployment are kept, and a
+        panel that calls in again re-registers and reappears with that history."""
+        screen = self.data["screens"].get(screen_id)
+        if screen is None:
+            raise HomeAssistantError(f"Unknown STIPS screen {screen_id}")
+        if _is_screen_online(screen):
+            raise HomeAssistantError("Only offline screens can be deleted")
+        for entity_id in list(self.hass.states.async_entity_ids(("sensor", "binary_sensor"))):
+            state = self.hass.states.get(entity_id)
+            if state and entity_id.split(".", 1)[1].startswith("stips_") and state.attributes.get("screen_id") == screen_id:
+                self.hass.states.async_remove(entity_id)
+        self.data["screens"].pop(screen_id, None)
+        await self.save()
 
     async def register_screen(self, call: ServiceCall) -> None:
         screen_id = call.data["screen_id"]
@@ -1005,6 +1021,7 @@ async def _async_setup_manager(hass: HomeAssistant) -> bool:
         ws_list_groups,
         ws_save_group,
         ws_delete_group,
+        ws_delete_screen,
         ws_create_backup,
         ws_list_backups,
         ws_restore_backup,
@@ -1044,7 +1061,7 @@ async def _async_setup_manager(hass: HomeAssistant) -> bool:
                     "name": "stips-panel-editor",
                     "embed_iframe": False,
                     "trust_external": False,
-                    "js_url": "/stips-panel/static/stips-panel-editor.js?v=1.5.9",
+                    "js_url": "/stips-panel/static/stips-panel-editor.js?v=1.5.16",
                 }
             },
             require_admin=True,
@@ -1280,6 +1297,16 @@ async def ws_save_group(hass: HomeAssistant, connection: websocket_api.ActiveCon
     manager.data["groups"][item["group_id"]] = item
     await manager.save()
     connection.send_result(msg["id"], item)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "stips_panel/delete_screen", vol.Required("screen_id"): SCREEN_ID}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_delete_screen(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _manager(hass).delete_screen(msg["screen_id"])
+    connection.send_result(msg["id"], {"deleted": msg["screen_id"]})
 
 
 @websocket_api.websocket_command(

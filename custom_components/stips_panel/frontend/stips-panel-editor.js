@@ -257,6 +257,21 @@ class StipsPanelEditor extends HTMLElement {
     } catch(e) { this.fail(e); }
   }
 
+  async deleteScreen() {
+    const screen=this.screens.find(x=>x.screen_id===this.selectedId);
+    if (!screen || this.screenOnline(screen)) return;
+    const name=screen.screen_name||screen.screen_id;
+    if (!confirm(`Delete offline screen "${name}" from STIPS Panels? Its backups and revision history are kept, and it reappears automatically when the panel comes back online.`)) return;
+    try {
+      this.busy=true; this.render();
+      await this.call({type:'stips_panel/delete_screen', screen_id:screen.screen_id});
+      this.selectedId=null; this.detail=null; this.draft=null;
+      await this.refresh(false);
+      this.message=`Deleted offline screen ${name}. It will reappear when it comes back online.`;
+      this.render();
+    } catch(e) { this.fail(e); }
+  }
+
   fleetIds() {
     const valid=this.fleetSelected.filter(id=>this.screens.some(x=>x.screen_id===id));
     return valid.length ? valid : (this.selectedId ? [this.selectedId] : []);
@@ -768,8 +783,8 @@ class StipsPanelEditor extends HTMLElement {
       Date:['Clock',{use24Hour:true,showSeconds:false,showDate:true,dateFormat:'medium',showDayOfWeek:true,timeZoneId:'system',fontScale:1,alignment:'start'}],
       RgbLight:['RgbLight',{showColorWheel:true,showBrightness:true,showPresetColors:true,showRecentColors:true,favoriteColors:[],showColorTemperature:true}],
       Cover:['Cover',{controlStyle:'Slider',orientation:'Horizontal',reverseDirection:false,shortPressToggleOpenClose:false,showOpen:true,showStop:true,showClose:true,showCurrentPosition:true,showPositionSlider:true,showTilt:true,presetPositions:[0,25,50,75,100]}],
-      Room:['Room',{areaId:'',visibleDomains:['light','switch','cover','climate'],entityLayout:'compact',entityOverrides:{},roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
-      RoomPopup:['Room',{areaId:'',visibleDomains:['light','switch','cover','climate'],entityLayout:'compact',entityOverrides:{},roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
+      Room:['Room',{areaId:'',visibleDomains:['light','switch','cover','climate'],entityLayout:'compact',entityOverrides:{},toggleScope:'FullRoom',roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
+      RoomPopup:['Room',{areaId:'',visibleDomains:['light','switch','cover','climate'],entityLayout:'compact',entityOverrides:{},toggleScope:'FullRoom',roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
       PagePopup:['PagePopup',{targetPageId:'',showTitle:true,showSummary:true,roomToggle:{lights:true,switches:true,closeCovers:false,turnOffClimate:false,turnOnLights:true,turnOnSwitches:true,openCovers:false,turnOnClimate:false}}],
       Page:['Page',{targetPageId:'',showTitle:true,showSummary:true}],
       Navigation:['Page',{targetPageId:'',showTitle:true,showSummary:true}],
@@ -822,8 +837,6 @@ class StipsPanelEditor extends HTMLElement {
   ensurePanelConfig() {
     if (!this.draft) return null;
     const p=this.draft.panel ||= {};
-    // The production editor always sends projects with showroom execution disabled.
-    p.demoModeEnabled=false;
     p.topBar ||= {size:'Small',connectivity:'IconAndText',dashboardName:'TextOnly',customTextMode:'Hidden',customText:'',navigation:'Hidden',settings:'IconOnly',brightness:'Hidden',volume:'Hidden'};
     p.navigation ||= {items:[
       {id:'home',label:'Home',icon:'home',visible:true},
@@ -835,7 +848,6 @@ class StipsPanelEditor extends HTMLElement {
     p.floatingButton ||= {shortClickAction:'OpenMenu',sizeDp:48,positionX:0,positionY:1,showNavigation:true,openSettings:true,enterEditMode:true,exitKiosk:false};
     p.screenScale ||= {cardScale:1,textScale:1,iconScale:1,spacing:'Normal',columnsOverride:0};
     p.pinProtection ||= {settings:false,dashboardEdit:true,cardEdit:true,navigationEdit:true,exitKiosk:true,showInterfaceBars:false,floatingProtectedActions:false,installerAdvanced:true};
-    p.showroom ||= {dashboardCount:2,presetProfile:'Auto',appliedPresetProfile:'',showHeader:true,headerTitle:'STIPS Smart Home',headerSubtitle:'Interactive Showroom',showHeaderTitle:true,showHeaderSubtitle:true,showPageTitle:true,showClock:true,showDate:false,showDemoBadge:true,showSettingsShortcut:false,showPageIndicator:true,hideAppNavigation:true,floatingAction:'admin',floatingLongPressOnly:true,protectAdminWithInstallerPin:true,autoResetEnabled:true,autoResetMinutes:3,attractModeEnabled:true,attractAfterSeconds:45,keepScreenAwake:true};
     p.alerts ||= {enabled:false,wakeScreen:true,showPopup:true,soundEnabled:true,selectedTone:'Siren',volume:80,rules:[]};
     // Panels older than Android 1.7.0 have no activation fields; they are Local panel with no delays.
     p.alerts.activationSource ??= 'LocalPanel';
@@ -852,7 +864,6 @@ class StipsPanelEditor extends HTMLElement {
 
   updatePanelField(field, value) { const p=this.ensurePanelConfig(); if(!p)return; p[field]=value; if(field==='appThemeId')p.appThemeUpdatedAtEpochMs=Date.now(); this.draftSource='draft'; this.render(); }
   updatePinField(field,value) { const p=this.ensurePanelConfig();if(!p)return;p.pinProtection[field]=value;this.draftSource='draft';this.render(); }
-  updateShowroomField(field,value) { const p=this.ensurePanelConfig();if(!p)return;p.showroom[field]=value;this.draftSource='draft';this.render(); }
   updateAlertField(field,value) { const p=this.ensurePanelConfig();if(!p)return;p.alerts[field]=value;this.draftSource='draft';this.render(); }
   updateAlertRules(text) {
     const p=this.ensurePanelConfig();if(!p)return;
@@ -1221,7 +1232,6 @@ class StipsPanelEditor extends HTMLElement {
     const d=this.dashboard, p=this.page, c=this.selectedCard;
     const panel=this.draft?this.ensurePanelConfig():{};
     const top=panel.topBar||{};
-    const showroom=panel.showroom||{};
     const pin=panel.pinProtection||{};
     const alerts=panel.alerts||{};
     const appearance=d?.appearance||{};
@@ -1297,6 +1307,7 @@ class StipsPanelEditor extends HTMLElement {
               <button data-command="restart_stips" ${!online?'disabled':''}>Restart STIPS</button>
               <button data-command="${screen?.kiosk?'disable_kiosk':'enable_kiosk'}" ${!online?'disabled':''}>${screen?.kiosk?'Disable kiosk':'Enable kiosk'}</button>
               <button class="danger" data-command="reboot_device" ${!online||!screen?.device_owner?'disabled':''}>Reboot device</button>
+              ${screen&&!online?`<button class="danger" data-delete-screen title="Removes this offline screen from the list. It appears again automatically when the panel comes back online.">Delete offline screen</button>`:''}
             </div>
             ${screen?`<details><summary>Diagnostics</summary><div class="diagnostics-grid">
               <span>STIPS</span><b>${this.esc(screen.app_version||'—')}</b><span>Android</span><b>${this.esc(screen.android_version||'—')}</b>
@@ -1376,8 +1387,8 @@ class StipsPanelEditor extends HTMLElement {
                    <div class="subgrid">${[['showEntityName','Name'],['showRoomName','Room'],['showState','State'],['showIcon','Icon'],['compact','Compact'],['showInlineControls','Inline controls']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-style-bool="${f}" ${checked(c.style?.[f] ?? !['showRoomName','compact'].includes(f))}> ${l}</label>`).join('')}</div>
                    <label>Alignment<select data-style-select="alignment">${['start','center','end'].map(x=>`<option value="${x}" ${x===(c.style?.alignment||'start')?'selected':''}>${x}</option>`).join('')}</select></label>
                    <label>Information density<select data-style-select="informationDensity">${['auto','compact','comfortable'].map(x=>`<option value="${x}" ${x===(c.style?.informationDensity||'auto')?'selected':''}>${x}</option>`).join('')}</select></label>
-                   <div class="two"><label>Accent<input data-style-text="accent" value="${this.attr(c.style?.accent||'')}" placeholder="#6750A4"></label><label>Icon name<input data-style-text="iconName" value="${this.attr(c.style?.iconName||'')}" placeholder="automatic"></label></div>
-                   <label>Variant<input data-field="variant" value="${this.attr(c.variant||'')}" placeholder="Default"></label>
+                   <div class="two"><label>Accent<input list="card-accent-presets" data-style-text="accent" value="${this.attr(c.style?.accent||'')}" placeholder="#6750A4"><datalist id="card-accent-presets">${['#FFD54F','#FFB74D','#EF5350','#EC407A','#BA68C8','#7E57C2','#64B5F6','#4DD0E1','#80CBC4','#81C784'].map(x=>`<option value="${x}">`).join('')}</datalist></label><label>Icon name<input data-style-text="iconName" value="${this.attr(c.style?.iconName||'')}" placeholder="automatic"></label></div>
+                   <label>Variant<input list="showcase-variant-presets" data-field="variant" value="${this.attr(c.variant||'')}" placeholder="Default"><datalist id="showcase-variant-presets"><option value="light_showcase">Showcase light</option><option value="switch_showcase">Showcase device</option><option value="climate_showcase">Showcase AC</option><option value="weather_showcase">Showcase weather</option><option value="sensor_showcase">Showcase sensor</option></datalist></label>
                  </div></details>
                  <details><summary>Actions & visibility</summary><div class="panel-settings">
                    <label>Tap<select data-card-action="tapAction">${actionOptions(c.tapAction)}</select></label>${actionFields('tapAction',c.tapAction)}<label>Double tap<select data-card-action="doubleTapAction">${actionOptions(c.doubleTapAction)}</select></label>${actionFields('doubleTapAction',c.doubleTapAction)}<label>Long press<select data-card-action="longPressAction">${actionOptions(c.longPressAction)}</select></label>${actionFields('longPressAction',c.longPressAction)}
@@ -1392,6 +1403,7 @@ class StipsPanelEditor extends HTMLElement {
                    <label>Home Assistant area<select data-room-card-area><option value="">Choose area</option>${this.areas.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(a=>{const id=a.area_id||a.id;return `<option value="${this.attr(id)}" ${id===cardSettings.areaId?'selected':''}>${this.esc(a.name||id)}</option>`}).join('')}</select></label>
                    <label>Show entities<select data-room-domains>${[['light,switch,cover,climate','All'],['light','Lights'],['switch','Switches'],['light,switch','Lights & Switches'],['cover','Shutters'],['climate','AC / Climate']].map(([v,l])=>`<option value="${v}" ${v.split(',').every(x=>(cardSettings.visibleDomains||[]).includes(x))&&(cardSettings.visibleDomains||[]).length===v.split(',').length?'selected':''}>${l}</option>`).join('')}</select></label>
                    <label>Light & switch layout<select data-room-layout><option value="compact" ${cardSettings.entityLayout!=='full'?'selected':''}>Compact · 2 per row</option><option value="full" ${cardSettings.entityLayout==='full'?'selected':''}>Full row · power button</option></select></label>
+                   <label>Room ON &amp; OFF controls<select data-room-toggle-scope><option value="FullRoom" ${(cardSettings.toggleScope||'FullRoom')==='FullRoom'?'selected':''}>Full room</option><option value="AddedEntitiesOnly" ${cardSettings.toggleScope==='AddedEntitiesOnly'?'selected':''}>Added entities only</option></select></label>
                     <b>Room OFF behavior</b><div class="subgrid">${[['lights','Turn off lights'],['switches','Turn off switches'],['closeCovers','Close shutters'],['turnOffClimate','Turn off AC']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-toggle="${f}" ${checked(cardSettings.roomToggle?.[f] ?? ['lights','switches'].includes(f))}> ${l}</label>`).join('')}</div>
                     <b>Room ON behavior</b><div class="subgrid">${[['turnOnLights','Turn on lights'],['turnOnSwitches','Turn on switches'],['openCovers','Open shutters'],['turnOnClimate','Turn on AC']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-room-toggle="${f}" ${checked(cardSettings.roomToggle?.[f] ?? ['turnOnLights','turnOnSwitches'].includes(f))}> ${l}</label>`).join('')}</div>
                    <b>Detected entities</b>${roomEntities.length?roomEntities.map((e,i)=>{const o=cardSettings.entityOverrides?.[e.id]||{};return `<div class="room-entity"><label class="toggleline"><input type="checkbox" data-room-visible="${this.attr(e.id)}" ${checked(!o.hidden)}> <span><b>${this.esc(o.customName||e.name)}</b><small>${this.esc(e.id)} · ${this.esc(e.state)}</small></span></label><input data-room-name="${this.attr(e.id)}" value="${this.attr(o.customName||'')}" placeholder="Custom display name"><div><button data-room-up="${this.attr(e.id)}" ${i===0?'disabled':''}>↑</button><button data-room-down="${this.attr(e.id)}" ${i===roomEntities.length-1?'disabled':''}>↓</button></div></div>`}).join(''):'<p class="hint">No supported entities are assigned to this area. Hidden and unavailable entities remain listed when registry metadata is available.</p>'}
@@ -1436,6 +1448,7 @@ class StipsPanelEditor extends HTMLElement {
               <label>Custom text<select data-topbar="customTextMode">${topModeOptions(top.customTextMode||'Hidden')}</select></label>
               ${top.customTextMode && top.customTextMode!=='Hidden'?`<label>Custom top-bar text<input data-topbar="customText" value="${this.attr(top.customText||'')}" maxlength="80"></label>`:''}
               <label class="toggleline"><input type="checkbox" data-panel-bool="showNavigation" ${checked(panel.showNavigation!==false)}> Show navigator</label>
+              <label>Navigator style<select data-nav-style>${[['default','Default'],['cards','Match cards'],['blur','Blur'],['transparent','Transparent']].map(([v,l])=>`<option value="${v}" ${(panel.navigation?.barStyle||'default')===v?'selected':''}>${l}</option>`).join('')}</select></label>
               <div class="subgrid"><label class="toggleline"><input type="checkbox" data-panel-bool="showHomeOverview" ${checked(panel.showHomeOverview===true)}> Home overview</label><label class="toggleline"><input type="checkbox" data-panel-bool="showInRecents" ${checked(panel.showInRecents!==false)}> Show in Recents</label><label class="toggleline"><input type="checkbox" data-panel-bool="swipeDashboards" ${checked(panel.swipeDashboards!==false)}> Swipe dashboards</label><label class="toggleline"><input type="checkbox" data-panel-bool="showDashboardIndicator" ${checked(panel.showDashboardIndicator!==false)}> Page indicator</label></div>
               <div class="subgrid"><label class="toggleline"><input type="checkbox" data-nav-visible="home" ${checked(navVisible('home'))}> Home</label><label class="toggleline"><input type="checkbox" data-nav-visible="entities" ${checked(navVisible('entities',false))}> Entities</label><label class="toggleline"><input type="checkbox" data-nav-visible="ha_dashboard" ${checked(navVisible('ha_dashboard',false))}> HA</label><label class="toggleline"><input type="checkbox" data-nav-visible="editor" ${checked(navVisible('editor'))}> Edit</label><label class="toggleline"><input type="checkbox" data-nav-visible="settings" ${checked(navVisible('settings'))}> Settings</label></div>
               <div class="floating-settings"><b>Floating action / recovery control</b><span>Drag the Action/Hidden marker in the screen preview, or use these exact controls. Hidden mode keeps the same long-press hotspot size and position.</span></div>
@@ -1472,9 +1485,10 @@ class StipsPanelEditor extends HTMLElement {
               <div class="two"><label>Gradient start<input data-appearance-text="gradientStart" value="${this.attr(appearance.gradientStart||'#182A42')}"></label><label>Gradient end<input data-appearance-text="gradientEnd" value="${this.attr(appearance.gradientEnd||'#120A24')}"></label></div>
               <label>Background image URI<input data-appearance-text="backgroundImageUri" value="${this.attr(appearance.backgroundImageUri||'')}" placeholder="Android content URI"></label>
               <label>Gradient angle<input type="number" min="0" max="360" data-appearance-number="gradientAngle" value="${Number(appearance.gradientAngle??145)}"></label>
-              <label>Overlay opacity<input type="range" min="0" max="1" step=".02" data-appearance-number="overlayOpacity" value="${Number(appearance.overlayOpacity??.18)}"></label>
-              <label>Card opacity<input type="range" min=".1" max="1" step=".02" data-appearance-number="cardOpacity" value="${Number(appearance.cardOpacity??.62)}"></label>
-              <label>Active-card opacity<input type="range" min=".1" max="1" step=".02" data-appearance-number="activeCardOpacity" value="${Number(appearance.activeCardOpacity??.78)}"></label>
+              <label>Overlay opacity · ${Math.round(Number(appearance.overlayOpacity??.5)*100)}%<input type="range" min="0" max="1" step=".01" data-appearance-number="overlayOpacity" value="${Number(appearance.overlayOpacity??.5)}"></label>
+              <label>Card opacity<input type="range" min=".1" max="1" step=".02" data-appearance-number="cardOpacity" value="${Number(appearance.cardOpacity??.5)}"></label>
+              <label>Active-card opacity<input type="range" min=".1" max="1" step=".02" data-appearance-number="activeCardOpacity" value="${Number(appearance.activeCardOpacity??.66)}"></label>
+              <label>Card blur · ${Math.round(Number(appearance.cardBlurRadius??20))} dp<input type="range" min="0" max="40" step="1" data-appearance-number="cardBlurRadius" value="${Number(appearance.cardBlurRadius??20)}"></label>
             </div></details>`:''}
             ${this.draft?`<details><summary>PIN protection</summary><div class="panel-settings"><div class="subgrid">${[['settings','Settings'],['dashboardEdit','Dashboard edit'],['cardEdit','Card edit'],['navigationEdit','Navigation edit'],['exitKiosk','Exit kiosk'],['showInterfaceBars','Show interface bars'],['floatingProtectedActions','Floating actions'],['installerAdvanced','Installer advanced']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-pin-bool="${f}" ${checked(pin[f] ?? (f!=='settings'&&f!=='showInterfaceBars'&&f!=='floatingProtectedActions'))}> ${l}</label>`).join('')}</div></div></details>`:''}
             ${this.draft?`<details><summary>Sensor alerts</summary><div class="panel-settings">
@@ -1485,7 +1499,7 @@ class StipsPanelEditor extends HTMLElement {
               <p class="hint">Create an Input Boolean helper in Home Assistant (Settings → Devices &amp; services → Helpers → Toggle), for example input_boolean.stips_alerts, then select it here.</p>`:''}
               <div class="subgrid">${[...(alertHa?[]:[['enabled','Alerts enabled']]),['wakeScreen','Wake screen'],['showPopup','Popup'],['soundEnabled','Sound']].map(([f,l])=>`<label class="toggleline"><input type="checkbox" data-alert-bool="${f}" ${checked(alerts[f] ?? f!=='enabled')}> ${l}</label>`).join('')}</div>
               <div class="two"><label>Arming delay<select data-alert-delay="armingDelaySeconds">${delayOptions(alerts.armingDelaySeconds)}</select></label><label>Alarm delay<select data-alert-delay="triggerDelaySeconds">${delayOptions(alerts.triggerDelaySeconds)}</select></label></div>
-              <label>Tone<select data-alert-select="selectedTone">${['Emergency','Seismic','Evacuation','Siren','Alert','Pulse','Chime'].map(x=>`<option value="${x}" ${x===(alerts.selectedTone||'Siren')?'selected':''}>${x}</option>`).join('')}</select></label>
+              <label>Tone<select data-alert-select="selectedTone">${['Emergency','Seismic','Evacuation','Siren','Alert','Pulse','Chime'].map(x=>`<option value="${x}" ${x===(alerts.selectedTone||'Siren')?'selected':''}>${x}</option>`).join('')}</select></label><label>Audio output<select data-alert-select="audioOutput"><option value="alarm" ${alerts.audioOutput!=='media'?'selected':''}>Alarm</option><option value="media" ${alerts.audioOutput==='media'?'selected':''}>Media (amplifier / audio zones)</option></select></label>
               <label>Volume <b>${Number(alerts.volume??80)}%</b><input type="range" min="0" max="100" data-alert-number="volume" value="${Number(alerts.volume??80)}"></label>
               <label>Rules <small>One per line: entity_id | trigger state | custom label | alarm delay seconds (blank = default, 0 = instant)</small><textarea class="compact-textarea rules" data-alert-rules>${this.esc(alertRules)}</textarea></label>
             </div></details>`:''}
@@ -1594,6 +1608,7 @@ class StipsPanelEditor extends HTMLElement {
     q('[data-page-popup-target]')?.addEventListener('change',e=>this.updatePagePopupTarget(e.target.value));
     q('[data-room-domains]')?.addEventListener('change',e=>this.updateRoomCardField('visibleDomains',e.target.value.split(',').filter(Boolean)));
     q('[data-room-layout]')?.addEventListener('change',e=>this.updateRoomCardField('entityLayout',e.target.value));
+    q('[data-room-toggle-scope]')?.addEventListener('change',e=>this.updateRoomCardField('toggleScope',e.target.value));
     qa('[data-room-toggle]').forEach(x=>x.addEventListener('change',e=>this.updateRoomToggle(e.target.dataset.roomToggle,e.target.checked)));
     qa('[data-room-visible]').forEach(x=>x.addEventListener('change',e=>this.updateRoomOverride(e.target.dataset.roomVisible,'hidden',!e.target.checked)));
     qa('[data-room-name]').forEach(x=>x.addEventListener('change',e=>this.updateRoomOverride(e.target.dataset.roomName,'customName',e.target.value.trim()||null)));
@@ -1611,10 +1626,6 @@ class StipsPanelEditor extends HTMLElement {
     qa('[data-appearance-select]').forEach(x=>x.addEventListener('change',e=>this.updateAppearanceField(e.target.dataset.appearanceSelect,e.target.value)));
     qa('[data-appearance-text]').forEach(x=>x.addEventListener('change',e=>this.updateAppearanceField(e.target.dataset.appearanceText,e.target.value)));
     qa('[data-appearance-number]').forEach(x=>x.addEventListener('change',e=>this.updateAppearanceField(e.target.dataset.appearanceNumber,Number(e.target.value))));
-    qa('[data-showroom-bool]').forEach(x=>x.addEventListener('change',e=>this.updateShowroomField(e.target.dataset.showroomBool,e.target.checked)));
-    qa('[data-showroom-select]').forEach(x=>x.addEventListener('change',e=>this.updateShowroomField(e.target.dataset.showroomSelect,e.target.value)));
-    qa('[data-showroom-text]').forEach(x=>x.addEventListener('change',e=>this.updateShowroomField(e.target.dataset.showroomText,e.target.value)));
-    qa('[data-showroom-number]').forEach(x=>x.addEventListener('change',e=>this.updateShowroomField(e.target.dataset.showroomNumber,Number(e.target.value))));
     qa('[data-pin-bool]').forEach(x=>x.addEventListener('change',e=>this.updatePinField(e.target.dataset.pinBool,e.target.checked)));
     qa('[data-alert-bool]').forEach(x=>x.addEventListener('change',e=>this.updateAlertField(e.target.dataset.alertBool,e.target.checked)));
     qa('[data-alert-select]').forEach(x=>x.addEventListener('change',e=>this.updateAlertField(e.target.dataset.alertSelect,e.target.value)));
@@ -1631,11 +1642,13 @@ class StipsPanelEditor extends HTMLElement {
     qa('[data-nav-visible]').forEach(x=>x.addEventListener('change',e=>this.updateNavVisibility(e.target.dataset.navVisible,e.target.checked)));
     qa('[data-floating-bool]').forEach(x=>x.addEventListener('change',e=>this.updateFloatingField(e.target.dataset.floatingBool,e.target.checked)));
     qa('[data-floating-number]').forEach(x=>x.addEventListener('change',e=>this.updateFloatingNumber(e.target.dataset.floatingNumber,e.target.value)));
+    q('[data-nav-style]')?.addEventListener('change',e=>{const p=this.ensurePanelConfig();if(!p)return;p.navigation.barStyle=e.target.value;this.draftSource='draft';this.render();});
     qa('[data-floating-select]').forEach(x=>x.addEventListener('change',e=>this.updateFloatingField(e.target.dataset.floatingSelect,e.target.value)));
     qa('[data-floating-pos]').forEach(x=>x.addEventListener('click',()=>{const [px,py]=x.dataset.floatingPos.split(',').map(Number);this.setFloatingPosition(px,py);}));
     q('[data-apply-json]')?.addEventListener('click',()=>this.updateRaw(q('#json').value));
     qa('[data-rollback]').forEach(x=>x.onclick=()=>this.rollback(x.dataset.rollback));
     qa('[data-command]').forEach(x=>x.onclick=()=>this.command(x.dataset.command));
+    q('[data-delete-screen]')?.addEventListener('click',()=>this.deleteScreen());
     qa('[data-save-template]').forEach(x=>x.onclick=()=>this.saveTemplate());
     qa('[data-template]').forEach(x=>x.onclick=()=>this.pushTemplate(x.dataset.template));
 
